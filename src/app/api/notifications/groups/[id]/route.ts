@@ -1,5 +1,6 @@
 /* /src/app/api/notification/groups/[id]/route.ts */
 export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -14,8 +15,10 @@ const patchSchema = z.object({
 /* ─────────────── PATCH – update group ─────────────── */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
@@ -25,8 +28,9 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
-  if (Object.keys(body).length === 0)
+  if (Object.keys(body).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
 
   await db
     .updateTable("notificationGroups")
@@ -35,26 +39,28 @@ export async function PATCH(
       ...("countries" in body ? { countries: JSON.stringify(body.countries) } : {}),
       updatedAt: new Date(),
     })
-    .where("id", "=", params.id)
+    .where("id", "=", id)
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, updated: true });
+  return NextResponse.json({ id, updated: true });
 }
 
 /* ─────────────── DELETE – remove group ─────────────── */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   await db
     .deleteFrom("notificationGroups")
-    .where("id", "=", params.id)
+    .where("id", "=", id)
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, deleted: true });
+  return NextResponse.json({ id, deleted: true });
 }

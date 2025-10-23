@@ -1,4 +1,5 @@
 // src/app/(dashboard)/magic-rules/[id]/page.tsx
+import { notFound } from "next/navigation";
 import { cookies, headers } from "next/headers";
 import { Suspense } from "react";
 import { RuleForm } from "../components/rule-form";
@@ -7,11 +8,9 @@ export const dynamic = "force-dynamic";
 
 async function fetchRule(id: string) {
   const base = process.env.NEXT_PUBLIC_APP_URL || "";
-  // Use relative fetch on the same host with auth cookies forwarded
   const res = await fetch(`${base}/api/magic-rules/${id}`, {
     headers: {
       cookie: cookies().toString(),
-      // forward important headers if needed by your auth
       "x-forwarded-host": headers().get("x-forwarded-host") || "",
       "x-forwarded-proto": headers().get("x-forwarded-proto") || "",
     },
@@ -24,9 +23,15 @@ async function fetchRule(id: string) {
 
 export default async function EditMagicRulePage({
   params,
-}: { params: { id: string } }) {
-  const rule = await fetchRule(params.id);
+}: {
+  // ❗ Next 15 expects Promise here
+  params?: Promise<{ id?: string }>;
+}) {
+  const p = (params ? await params : {}) as { id?: string };
+  const id = p.id?.trim();
+  if (!id) return notFound();
 
+  const rule = await fetchRule(id);
   if (!rule) {
     return (
       <div className="p-6">

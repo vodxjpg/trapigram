@@ -1,44 +1,28 @@
 // ==================================================================
-//  src/app/api/affiliate/products/[id]/route.ts  – FULL REWRITE
+//  src/app/api/affiliate/products/[id]/route.ts  – NEXT 16 FIXED
 // ==================================================================
 export const runtime = "nodejs";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
+
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { v4 as uuidv4 } from "uuid";
-import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
+import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
+
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
-const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const countryMap = z.record(z.string(), ptsObj);          // country ➜ points
-const pointsByLvl = z.record(z.string(), countryMap);      // levelId ➜ country map
+const ptsObj = z.object({
+  regular: z.number().min(0),
+  sale: z.number().nullable(),
+});
+const countryMap = z.record(z.string(), ptsObj);         // country ➜ points
+const pointsByLvl = z.record(z.string(), countryMap);    // levelId ➜ country map
 
 const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 const costMap = z.record(z.string(), z.number().min(0));
-
-function splitPoints(map: Record<string, { regular: number; sale: number | null }>) {
-  const regular: Record<string, number> = {};
-  const sale: Record<string, number> = {};
-  for (const [c, v] of Object.entries(map)) {
-    regular[c] = v.regular;
-    if (v.sale != null) sale[c] = v.sale;
-  }
-  return { regularPoints: regular, salePoints: Object.keys(sale).length ? sale : null };
-}
-function mergePoints(
-  regular: Record<string, number> | null,
-  sale: Record<string, number> | null,
-) {
-  const out: Record<string, { regular: number; sale: number | null }> = {};
-  const reg = regular || {};
-  const sal = sale || {};
-  for (const [c, v] of Object.entries(reg)) out[c] = { regular: Number(v), sale: null };
-  for (const [c, v] of Object.entries(sal))
-    out[c] = { ...(out[c] || { regular: 0, sale: null }), sale: Number(v) };
-  return out;
-}
 
 /* ---------------- schema fragments ----------------------------- */
 const variationPatch = z
@@ -53,12 +37,13 @@ const variationPatch = z
     cost: costMap.optional(),
     minLevelId: z.string().uuid().nullable().optional(),
   })
+  // accept either `prices` or `pointsPrice`
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
 
 const attrInput = z.object({
   id: z.string(),
   selectedTerms: z.array(z.string()),
-  useForVariations: z.boolean().optional(), // round‑trip only
+  useForVariations: z.boolean().optional(), // round-trip only
 });
 
 const patchSchema = z.object({
@@ -89,59 +74,55 @@ const patchSchema = z.object({
 });
 
 /* =================================================================
-   GET  – fetch single affiliate product (incl. variation stock)
+   GET  – fetch single affiliate product (incl. variation stock)
    ================================================================= */
 export async function GET(
   req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await ctx.params;
+  const { id } = await context.params;
 
-  const context = await getContext(req);
-  if (context instanceof NextResponse) return context;
-  const { organizationId } = context;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
-
-  /* core row */
+  // core row
   const product = await db
     .selectFrom("affiliateProducts")
     .selectAll()
     .where("id", "=", id)
     .where("organizationId", "=", organizationId)
     .executeTakeFirst();
-  if (!product) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  /* variations */
+  if (!product) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // variations
   const variations = await db
     .selectFrom("affiliateProductVariations")
     .selectAll()
     .where("productId", "=", product.id)
     .execute();
 
-  /* stock rows (affiliateVariationId FK) */
+  // stock rows (affiliateVariationId FK)
   const stockRows = await db
     .selectFrom("warehouseStock")
     .select(["warehouseId", "affiliateVariationId", "country", "quantity"])
     .where("affiliateProductId", "=", product.id)
     .execute();
 
-  /* build stock maps */
+  // build variation-level stock maps
   const variationStock: Record<string, ReturnType<typeof stockMap.parse>> = {};
-  const baseStock: Record<string, Record<string, number>> = {};
-
   for (const row of stockRows) {
-    if (row.affiliateVariationId) {
-      const vid = row.affiliateVariationId;
-      if (!variationStock[vid]) variationStock[vid] = {};
-      if (!variationStock[vid][row.warehouseId]) variationStock[vid][row.warehouseId] = {};
-      variationStock[vid][row.warehouseId][row.country] = row.quantity;
-    } else {
-      if (!baseStock[row.warehouseId]) baseStock[row.warehouseId] = {};
-      baseStock[row.warehouseId][row.country] = row.quantity;
-    }
+    if (!row.affiliateVariationId) continue;
+    const vid = row.affiliateVariationId;
+    if (!variationStock[vid]) variationStock[vid] = {};
+    if (!variationStock[vid][row.warehouseId]) variationStock[vid][row.warehouseId] = {};
+    variationStock[vid][row.warehouseId][row.country] = row.quantity;
   }
 
-  /* attributes with selected terms */
+  // attributes with selected terms
   const attrRows = await db
     .selectFrom("productAttributeValues")
     .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
@@ -176,11 +157,10 @@ export async function GET(
     useForVariations: product.productType === "variable",
   }));
 
-  const mappedVariations = variations.map(v => {
-    // rebuild the full level→country→{regular,sale} map:
+  const mappedVariations = variations.map((v) => {
     const pointsPrice = mergePointsByLevel(
       v.regularPoints as Record<string, Record<string, number>>,
-      v.salePoints as Record<string, Record<string, number>> | null
+      v.salePoints as Record<string, Record<string, number>> | null,
     );
 
     return {
@@ -188,7 +168,6 @@ export async function GET(
       attributes: v.attributes,
       sku: v.sku,
       image: v.image,
-      // this becomes an object keyed by level IDs
       prices: pointsPrice,
       pointsPrice,
       cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
@@ -201,7 +180,7 @@ export async function GET(
     product: {
       ...product,
       pointsPrice: mergePointsByLevel(product.regularPoints, product.salePoints),
-      cost: typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost ?? {}, // ← NEW
+      cost: typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost ?? {},
       warehouseStock: stockRows.filter((r) => !r.affiliateVariationId),
       variations: mappedVariations,
       attributes: attributesOut,
@@ -210,29 +189,32 @@ export async function GET(
 }
 
 /* =================================================================
-   PATCH – update affiliate product (core, attributes, variations, stock)
+   PATCH – update affiliate product (core, attributes, variations, stock)
    ================================================================= */
 export async function PATCH(
   req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id: productId } = await ctx.params;
+    const { id: productId } = await context.params;
 
-    const context = await getContext(req);
-    if (context instanceof NextResponse) return context;
-    const { organizationId, tenantId } = context;
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId, tenantId } = ctx;
 
     let body: z.infer<typeof patchSchema>;
     try {
       body = patchSchema.parse(await req.json());
     } catch (err) {
-      if (err instanceof z.ZodError)
+      if (err instanceof z.ZodError) {
         return NextResponse.json({ error: err.errors }, { status: 400 });
+      }
       throw err;
     }
-    if (Object.keys(body).length === 0)
+
+    if (Object.keys(body).length === 0) {
       return NextResponse.json({ message: "Nothing to update" });
+    }
 
     await db.transaction().execute(async (trx) => {
       /* ---------------- core fields ---------------- */
@@ -252,6 +234,7 @@ export async function PATCH(
       }
       if (body.cost) core.cost = body.cost;
       if (body.minLevelId !== undefined) core.minLevelId = body.minLevelId;
+
       if (Object.keys(core).length) {
         core.updatedAt = new Date();
         await trx
@@ -264,13 +247,19 @@ export async function PATCH(
 
       /* ---------------- attributes ---------------- */
       if (body.attributes) {
-        await trx.deleteFrom("productAttributeValues").where("productId", "=", productId).execute();
-        for (const a of body.attributes)
-          for (const termId of a.selectedTerms)
+        await trx
+          .deleteFrom("productAttributeValues")
+          .where("productId", "=", productId)
+          .execute();
+
+        for (const a of body.attributes) {
+          for (const termId of a.selectedTerms) {
             await trx
               .insertInto("productAttributeValues")
               .values({ productId, attributeId: a.id, termId })
               .execute();
+          }
+        }
       }
 
       /* ---------------- variations ---------------- */
@@ -282,7 +271,7 @@ export async function PATCH(
           .execute();
         const existingIds = existingRows.map((r) => r.id);
 
-        // delete any removed variations …
+        // delete removed variations
         const incomingIds = body.variations.map((v) => v.id);
         const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
         if (toDelete.length) {
@@ -293,7 +282,6 @@ export async function PATCH(
         }
 
         for (const v of body.variations) {
-          // 💡 again use splitPointsByLevel on the nested map:
           const srcMap = v.prices ?? v.pointsPrice;
           const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
 
@@ -325,7 +313,10 @@ export async function PATCH(
       }
 
       /* ---------------- warehouse stock ---------------- */
-      await trx.deleteFrom("warehouseStock").where("affiliateProductId", "=", productId).execute();
+      await trx
+        .deleteFrom("warehouseStock")
+        .where("affiliateProductId", "=", productId)
+        .execute();
 
       const stockRows: {
         warehouseId: string;
@@ -335,8 +326,8 @@ export async function PATCH(
         quantity: number;
       }[] = [];
 
-      /* base‑level rows (if provided) */
-      if (body.warehouseStock)
+      // base-level rows (if provided)
+      if (body.warehouseStock) {
         stockRows.push(
           ...body.warehouseStock.map((r) => ({
             warehouseId: r.warehouseId,
@@ -346,14 +337,15 @@ export async function PATCH(
             quantity: r.quantity,
           })),
         );
+      }
 
-      /* collect per‑variation stock from body.variations */
-      if (body.variations)
+      // per-variation stock from body.variations
+      if (body.variations) {
         for (const v of body.variations) {
           if (!v.stock) continue;
-          for (const [wId, byCountry] of Object.entries(v.stock))
-            for (const [country, qty] of Object.entries(byCountry))
-              if (qty > 0)
+          for (const [wId, byCountry] of Object.entries(v.stock)) {
+            for (const [country, qty] of Object.entries(byCountry)) {
+              if (qty > 0) {
                 stockRows.push({
                   warehouseId: wId,
                   affiliateProductId: productId,
@@ -361,9 +353,13 @@ export async function PATCH(
                   country,
                   quantity: qty,
                 });
+              }
+            }
+          }
         }
+      }
 
-      /* insert */
+      // insert stock rows
       for (const r of stockRows) {
         await trx
           .insertInto("warehouseStock")
@@ -376,18 +372,19 @@ export async function PATCH(
             country: r.country,
             quantity: r.quantity,
             organizationId,
-            tenantId,               /* FIX */
+            tenantId,
             createdAt: new Date(),
             updatedAt: new Date(),
           })
           .execute();
       }
 
-      /* stockStatus */
+      // stockStatus
       await trx
         .updateTable("affiliateProducts")
         .set({
-          stockStatus: stockRows.length && (body.manageStock ?? true) ? "managed" : "unmanaged",
+          stockStatus:
+            stockRows.length && (body.manageStock ?? true) ? "managed" : "unmanaged",
           updatedAt: new Date(),
         })
         .where("id", "=", productId)
@@ -400,31 +397,33 @@ export async function PATCH(
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 /* ══════════════════════════════════════════════════════════════
-   DELETE – remove product  children
+   DELETE – remove product and children (Next 16 params fix)
    ════════════════════════════════════════════════════════════ */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const { id } = params;
-
-  /* child rows cascade thanks to FK ON DELETE CASCADE, but we
-     delete variations manually to clear their stocks first      */
+  // clear stock first
   await db
     .deleteFrom("warehouseStock")
     .where("affiliateProductId", "=", id)
     .execute();
 
+  // remove variations
   await db
     .deleteFrom("affiliateProductVariations")
     .where("productId", "=", id)
     .execute();
 
+  // finally the product
   await db
     .deleteFrom("affiliateProducts")
     .where("id", "=", id)

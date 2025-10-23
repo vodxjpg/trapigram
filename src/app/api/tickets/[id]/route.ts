@@ -1,8 +1,9 @@
-// src/app/api/tickets/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { z } from "zod";
 import { getContext } from "@/lib/context";
+
+export const runtime = "nodejs";
 
 /* ---------- validation helpers ---------- */
 const uuid = z.string().uuid("Invalid ticketId");
@@ -10,23 +11,25 @@ const uuid = z.string().uuid("Invalid ticketId");
 /* ---------- GET /api/tickets/[ticketId] ---------- */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> } // ⬅️ Next 16
 ) {
+  const { id: rawId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const parse = uuid.safeParse(params.id);
+    const parse = uuid.safeParse(rawId);
     if (!parse.success) {
-      return NextResponse.json({ error: parse.error.issues[0].message }, { status: 400 });
+      return NextResponse.json(
+        { error: parse.error.issues[0].message },
+        { status: 400 }
+      );
     }
     const id = parse.data;
 
-    // ─────────────────────────────────────────────────────────────
-    // Lazy close this ticket if lastMessageAt is > 24h ago
-    // (only uses tickets.lastMessageAt; ignores ticketMessages here)
-    // ─────────────────────────────────────────────────────────────
+    // Lazy close if lastMessageAt > 24h
     await pool.query(
       `
       UPDATE tickets
@@ -37,10 +40,10 @@ export async function GET(
          AND status <> 'closed'
          AND "lastMessageAt" < NOW() - INTERVAL '24 hours'
       `,
-      [id, organizationId],
+      [id, organizationId]
     );
 
-    // fetch ticket header + client name
+    // Ticket header + client name
     const ticketQuery = `
       SELECT t.id,
              t."organizationId",
@@ -63,7 +66,7 @@ export async function GET(
     }
     const ticket = tRes.rows[0];
 
-    // fetch messages
+    // Messages
     const msgQuery = `
       SELECT id,
              "ticketId",

@@ -39,6 +39,44 @@ import {
 import { toast } from "sonner"
 import { useAffiliateProducts, type AffiliateProduct } from "@/hooks/use-affiliate-products"
 
+/** Normalize the different possible shapes of pointsPrice into { regular, sale } for the first available country */
+function pickFirstRegularSale(pointsPrice: unknown): { regular: number; sale: number | null } | null {
+  if (!pointsPrice || typeof pointsPrice !== "object") return null
+  const top = pointsPrice as Record<string, unknown>
+  const topKeys = Object.keys(top)
+  if (!topKeys.length) return null
+
+  // Case A: per-country object  { US: { regular, sale }, AE: {…} }
+  const firstVal = top[topKeys[0]]
+  if (firstVal && typeof firstVal === "object" && "regular" in (firstVal as any)) {
+    const { regular = 0, sale = null } = firstVal as { regular?: number; sale?: number | null }
+    return { regular: Number(regular) || 0, sale: sale == null ? null : Number(sale) }
+  }
+
+  // Case B: old shape per-country number { US: 120, AE: 90 }
+  if (typeof firstVal === "number") {
+    return { regular: Number(firstVal) || 0, sale: null }
+  }
+
+  // Case C: per-level → per-country  { default: { US: { regular, sale }, … }, <levelId>: { … } }
+  const levelMap = (top as any).default ?? top[topKeys[0]]
+  if (levelMap && typeof levelMap === "object") {
+    const lvl = levelMap as Record<string, unknown>
+    const countries = Object.keys(lvl)
+    if (!countries.length) return null
+    const v = lvl[countries[0]]
+    if (v && typeof v === "object" && "regular" in (v as any)) {
+      const { regular = 0, sale = null } = v as { regular?: number; sale?: number | null }
+      return { regular: Number(regular) || 0, sale: sale == null ? null : Number(sale) }
+    }
+    if (typeof v === "number") {
+      return { regular: Number(v) || 0, sale: null }
+    }
+  }
+
+  return null
+}
+
 export function AffiliateProductsDataTable() {
   const router = useRouter()
   const { products, mutate, isLoading } = useAffiliateProducts()
@@ -46,9 +84,6 @@ export function AffiliateProductsDataTable() {
   const [sorting, setSorting] = useState<SortingState>([])
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
-  /* ------------------------------------------------------------------
-     delete helper
-  ------------------------------------------------------------------ */
   const handleDelete = async () => {
     if (!deleteId) return
     try {
@@ -63,114 +98,91 @@ export function AffiliateProductsDataTable() {
     }
   }
 
-  /* ------------------------------------------------------------------
-   columns
------------------------------------------------------------------- */
-const columns: ColumnDef<AffiliateProduct>[] = [
-  /* ------------ Image ------------------------------------------------ */
-  {
-    accessorKey: "image",
-    header: "Image",
-    cell: ({ row }) => {
-      const { image, title } = row.original;
-      const initials = title
-        .split(" ")
-        .slice(0, 2)
-        .map((w) => w[0].toUpperCase())
-        .join("");
-      return (
-        <div className="relative h-10 w-10">
-          {image ? (
-            <Image
-              src={image}
-              alt={title}
-              fill
-              className="object-cover rounded-md"
-            />
-          ) : (
-            <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-200 text-xs text-gray-600">
-              {initials}
-            </div>
-          )}
-        </div>
-      );
+  const columns: ColumnDef<AffiliateProduct>[] = [
+    {
+      accessorKey: "image",
+      header: "Image",
+      cell: ({ row }) => {
+        const { image, title } = row.original
+        const initials = title
+          .split(" ")
+          .slice(0, 2)
+          .map((w) => w[0]?.toUpperCase() ?? "")
+          .join("")
+        return (
+          <div className="relative h-10 w-10">
+            {image ? (
+              <Image src={image} alt={title} fill className="object-cover rounded-md" />
+            ) : (
+              <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-200 text-xs text-gray-600">
+                {initials || "–"}
+              </div>
+            )}
+          </div>
+        )
+      },
     },
-  },
+    { accessorKey: "title", header: "Title" },
+    { accessorKey: "sku", header: "SKU" },
 
-  /* ------------ basic fields ---------------------------------------- */
-  { accessorKey: "title", header: "Title" },
-  { accessorKey: "sku",   header: "SKU"  },
-
-  /* ------------ Points (show regular / sale of 1st country) ---------- */
-  {
-    accessorKey: "pointsPrice",
-    header: "Points",
-    cell: ({ row }) => {
-      const map = row.original.pointsPrice ?? {};
-      const firstCountry = Object.keys(map)[0];
-      if (!firstCountry) return "-";
-
-      const { regular, sale } = map[firstCountry];
-      return (
-        <span>
-          {sale != null ? (
-            <>
-              <s className="text-muted-foreground">{regular}</s>&nbsp;
-              <span className="font-medium text-red-600">{sale}</span>
-            </>
-          ) : (
-            regular
-          )}
-        </span>
-      );
+    // Points column — safe across all shapes
+    {
+      accessorKey: "pointsPrice",
+      header: "Points",
+      cell: ({ row }) => {
+        const rs = pickFirstRegularSale(row.original.pointsPrice as unknown)
+        if (!rs) return "-"
+        const { regular, sale } = rs
+        return (
+          <span>
+            {sale != null ? (
+              <>
+                <s className="text-muted-foreground">{regular}</s>&nbsp;
+                <span className="font-medium text-red-600">{sale}</span>
+              </>
+            ) : (
+              regular
+            )}
+          </span>
+        )
+      },
     },
-  },
 
-  /* ------------ Type badge ------------------------------------------ */
-  {
-    accessorKey: "productType",
-    header: "Type",
-    cell: ({ row }) => (
-      <Badge variant="secondary">{row.original.productType}</Badge>
-    ),
-  },
-
-  /* ------------ Actions --------------------------------------------- */
-  {
-    id: "actions",
-    cell: ({ row }) => {
-      const product = row.original;
-      return (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="h-8 w-8 p-0">
-              <span className="sr-only">Open menu</span>
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => router.push(`/affiliates/products/${product.id}`)}
-            >
-              <Edit className="h-4 w-4 mr-2" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => setDeleteId(product.id)}
-              className="text-red-600"
-            >
-              <Trash className="h-4 w-4 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      );
+    {
+      accessorKey: "productType",
+      header: "Type",
+      cell: ({ row }) => <Badge variant="secondary">{row.original.productType}</Badge>,
     },
-  },
-];
 
+    {
+      id: "actions",
+      cell: ({ row }) => {
+        const product = row.original
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <span className="sr-only">Open menu</span>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => router.push(`/affiliates/products/${product.id}`)}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setDeleteId(product.id)} className="text-red-600">
+                <Trash className="h-4 w-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
+    },
+  ]
 
   const table = useReactTable({
     data: products,
@@ -214,7 +226,6 @@ const columns: ColumnDef<AffiliateProduct>[] = [
         </Table>
       </div>
 
-      {/* simple prev/next */}
       <div className="flex justify-end gap-2 mt-2">
         <Button
           variant="outline"
@@ -234,24 +245,15 @@ const columns: ColumnDef<AffiliateProduct>[] = [
         </Button>
       </div>
 
-      {/* delete confirm */}
-      <AlertDialog
-        open={!!deleteId}
-        onOpenChange={(open) => !open && setDeleteId(null)}
-      >
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete product?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This cannot be undone.
-            </AlertDialogDescription>
+            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={handleDelete}
-            >
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={handleDelete}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

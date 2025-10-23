@@ -1,4 +1,5 @@
-// /home/zodx/Desktop/trapigram/src/app/api/clients/secret-phrase/[id]/route.ts
+// src/app/api/clients/secret-phrase/[id]/route.ts
+export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
@@ -7,7 +8,7 @@ import { getContext } from "@/lib/context";
 import crypto from "crypto";
 import { z } from "zod";
 
-/* ---------- encryption helpers (same as before) ---------- */
+/* ---------- encryption helpers ---------- */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
@@ -25,9 +26,7 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
 function encryptSecretNode(plain: string): string {
   const { key, iv } = getEncryptionKeyAndIv();
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let encrypted = cipher.update(plain, "utf8", "base64");
-  encrypted += cipher.final("base64");
-  return encrypted;
+  return cipher.update(plain, "utf8", "base64") + cipher.final("base64");
 }
 
 /* ---------- validation ---------- */
@@ -35,7 +34,9 @@ const bodySchema = z.object({
   phrase: z.string().min(1, "Phrase is required"),
 });
 
-type Params = { params: Promise<{ id: string }> }; // id = Telegram userId
+/* ---------- types ---------- */
+// Next 15/16: params is a Promise
+type Ctx = { params: Promise<{ id: string }> }; // id = Telegram userId
 
 /* ---------- helpers ---------- */
 async function getClientByTelegramId(userId: string, organizationId: string) {
@@ -49,11 +50,12 @@ async function getClientByTelegramId(userId: string, organizationId: string) {
   return rows[0] || null;
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+/* ───────── GET: existence + updatedAt ───────── */
+export async function GET(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const client = await getClientByTelegramId(userId, organizationId);
@@ -77,16 +79,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 /* ───────── POST: create (or replace) client secret phrase ───────── */
-export async function POST(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const { phrase } = bodySchema.parse(await req.json());
 
-    // Find client by Telegram userId
     const client = await getClientByTelegramId(userId, organizationId);
     if (!client) {
       return NextResponse.json({ error: "Client not found" }, { status: 404 });
@@ -95,10 +96,8 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Secret phrase is disabled for this client" }, { status: 403 });
     }
 
-    // Encrypt & upsert
     const encrypted = encryptSecretNode(phrase);
 
-    // Check if phrase already exists
     const checkSql = `SELECT id FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`;
     const checkRes = await pool.query(checkSql, [client.id]);
 
@@ -123,7 +122,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       row = res.rows[0];
     }
 
-    // ✅ Consume any outstanding force flag (so the bot stops re-prompting)
+    // clear force flag so the bot stops re-prompting
     await pool.query(
       `UPDATE public.clients
           SET "secretPhraseForceAt" = NULL,
@@ -142,17 +141,16 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 }
 
-/* ───────── PATCH: update phrase for client ───────── */
-export async function PATCH(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+/* ───────── PATCH: update phrase ───────── */
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const { phrase } = bodySchema.parse(await req.json());
 
-    // Find client by Telegram userId
     const client = await getClientByTelegramId(userId, organizationId);
     if (!client) {
       return NextResponse.json({ error: "Client not found" }, { status: 404 });
@@ -163,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const encrypted = encryptSecretNode(phrase);
 
-    // Ensure phrase row exists
+    // upsert
     const checkSql = `SELECT id FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`;
     const checkRes = await pool.query(checkSql, [client.id]);
 
@@ -188,7 +186,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       row = res.rows[0];
     }
 
-    // ✅ Consume any outstanding force flag (same as POST)
     await pool.query(
       `UPDATE public.clients
           SET "secretPhraseForceAt" = NULL,
@@ -207,25 +204,23 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 }
 
-/* ───────── DELETE: clear phrase for client (reset) ───────── */
-export async function DELETE(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+/* ───────── DELETE: clear phrase (reset) ───────── */
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
-    // Find client by Telegram userId
     const client = await getClientByTelegramId(userId, organizationId);
     if (!client) {
       return NextResponse.json({ error: "Client not found" }, { status: 404 });
     }
 
-    // Remove any existing phrase row
     const delSql = `DELETE FROM "clientSecretPhrase" WHERE "clientId" = $1`;
     const result = await pool.query(delSql, [client.id]);
 
-    // 🔔 Optional but recommended: force a prompt immediately after reset
+    // Optionally set a force prompt after reset
     await pool.query(
       `UPDATE public.clients
           SET "secretPhraseForceAt" = NOW(),

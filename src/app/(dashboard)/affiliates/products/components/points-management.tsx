@@ -1,18 +1,13 @@
 /* ────────────────────────────────────────────────────────────────
    Country-based Cost + Points table
 ───────────────────────────────────────────────────────────────── */
-"use client"
+"use client";
 
-import { useState } from "react"
-import { ChevronDown, ChevronUp } from "lucide-react"
+import { useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
-import { Input } from "@/components/ui/input"
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -20,34 +15,36 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 
 /* ------------------------------------------------------------------
    Types
 ------------------------------------------------------------------ */
 export interface CountryPoints {
-  regular: number
-  sale: number | null
+  regular: number;
+  sale: number | null;
 }
 export interface PointsMap {
-  [country: string]: CountryPoints
+  [country: string]: CountryPoints;
 }
 export interface CostMap {
-  [country: string]: number
+  [country: string]: number;
 }
 
 interface Props {
-  title: string
-  countries: string[]
-
+  title: string;
+  countries: string[];
   /* points */
-  pointsData: PointsMap
-  onPointsChange: (p: PointsMap) => void
-
+  pointsData: PointsMap;
+  onPointsChange: (p: PointsMap) => void;
   /* cost */
-  costData: CostMap
-  onCostChange: (c: CostMap) => void
+  costData: CostMap;
+  onCostChange: (c: CostMap) => void;
 }
+
+/* Helper: show empty string instead of 0/undefined/NaN */
+const displayNum = (n: number | null | undefined) =>
+  n == null || Number.isNaN(n) || n === 0 ? "" : String(n);
 
 /* ------------------------------------------------------------------
    Component
@@ -60,24 +57,18 @@ export function PointsManagement({
   costData = {},
   onCostChange,
 }: Props) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(true);
 
-  const patchPoints = (
-    country: string,
-    patch: Partial<CountryPoints>,
-  ) =>
+  const patchPoints = (country: string, patch: Partial<CountryPoints>) => {
+    const prev: CountryPoints = pointsData[country] ?? { regular: 0, sale: null };
     onPointsChange({
       ...pointsData,
-      [country]: {
-        regular: 0,
-        sale: null,
-        ...(pointsData[country] || {}),
-        ...patch,
-      },
-    })
+      [country]: { ...prev, ...patch },
+    });
+  };
 
   const patchCost = (country: string, cost: number) =>
-    onCostChange({ ...costData, [country]: cost })
+    onCostChange({ ...costData, [country]: cost });
 
   return (
     <Card>
@@ -86,11 +77,7 @@ export function PointsManagement({
         className="cursor-pointer flex items-center justify-between py-3 px-4"
       >
         <CardTitle className="text-base">{title}</CardTitle>
-        {open ? (
-          <ChevronUp className="h-4 w-4" />
-        ) : (
-          <ChevronDown className="h-4 w-4" />
-        )}
+        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
       </CardHeader>
 
       {open && (
@@ -102,12 +89,8 @@ export function PointsManagement({
                 <TableRow>
                   <TableHead>Country</TableHead>
                   <TableHead className="w-[120px] text-right">Cost</TableHead>
-                  <TableHead className="w-[120px] text-right">
-                    Regular pts
-                  </TableHead>
-                  <TableHead className="w-[120px] text-right">
-                    Sale pts&nbsp;(opt.)
-                  </TableHead>
+                  <TableHead className="w-[120px] text-right">Regular pts</TableHead>
+                  <TableHead className="w-[120px] text-right">Sale pts&nbsp;(opt.)</TableHead>
                 </TableRow>
               </TableHeader>
 
@@ -122,13 +105,11 @@ export function PointsManagement({
                         type="number"
                         min="0"
                         step="0.01"
-                        value={costData[c] ?? 0}
+                        value={displayNum(costData[c])}
                         onChange={(e) =>
-                          patchCost(
-                            c,
-                            Number.parseFloat(e.target.value) || 0,
-                          )
+                          patchCost(c, e.target.value.trim() === "" ? 0 : Number(e.target.value) || 0)
                         }
+                        placeholder="—"
                       />
                     </TableCell>
 
@@ -138,12 +119,13 @@ export function PointsManagement({
                         type="number"
                         min="0"
                         step="1"
-                        value={pointsData[c]?.regular ?? 0}
+                        value={displayNum(pointsData[c]?.regular)}
                         onChange={(e) =>
                           patchPoints(c, {
-                            regular: Number.parseInt(e.target.value) || 0,
+                            regular: e.target.value.trim() === "" ? 0 : parseInt(e.target.value, 10) || 0,
                           })
                         }
+                        placeholder="—"
                       />
                     </TableCell>
 
@@ -153,15 +135,16 @@ export function PointsManagement({
                         type="number"
                         min="0"
                         step="1"
-                        value={pointsData[c]?.sale ?? ""}
+                        value={displayNum(pointsData[c]?.sale)}
                         onChange={(e) =>
                           patchPoints(c, {
                             sale:
                               e.target.value.trim() === ""
                                 ? null
-                                : Number.parseInt(e.target.value) || 0,
+                                : parseInt(e.target.value, 10) || 0,
                           })
                         }
+                        placeholder="—"
                       />
                     </TableCell>
                   </TableRow>
@@ -172,5 +155,5 @@ export function PointsManagement({
         </CardContent>
       )}
     </Card>
-  )
+  );
 }

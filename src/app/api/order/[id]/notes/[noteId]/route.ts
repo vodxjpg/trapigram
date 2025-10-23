@@ -36,7 +36,12 @@ const patchSchema = z.object({
   visibleToCustomer: z.boolean().optional(),
 });
 
-export async function GET(req: NextRequest, { params }: { params: { noteId: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ noteId: string }> } // Next 16: params is a Promise
+) {
+  const { noteId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -47,7 +52,7 @@ export async function GET(req: NextRequest, { params }: { params: { noteId: stri
        FROM "orderNotes"
       WHERE id = $1 AND "organizationId" = $2
       LIMIT 1`,
-    [params.noteId, organizationId],
+    [noteId, organizationId],
   );
   if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -69,7 +74,12 @@ export async function GET(req: NextRequest, { params }: { params: { noteId: stri
   );
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { noteId: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ noteId: string }> }
+) {
+  const { noteId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -87,16 +97,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-    // fetch current row (need visibility/order/author to decide notifications)
+  // fetch current row (need visibility/order/author to decide notifications)
   const { rows: curRows } = await pool.query(
     `SELECT note,"visibleToCustomer","orderId","authorRole"
        FROM "orderNotes"
       WHERE id = $1 AND "organizationId" = $2
       LIMIT 1`,
-    [params.noteId, organizationId]
+    [noteId, organizationId]
   );
   if (!curRows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const cur = curRows[0];
+
   const sets: string[] = [];
   const vals: any[] = [];
   if (typeof body.note === "string") {
@@ -107,7 +118,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
     sets.push(`"visibleToCustomer" = $${sets.length + 1}`);
     vals.push(body.visibleToCustomer);
   }
-  vals.push(params.noteId, organizationId);
+  vals.push(noteId, organizationId);
 
   const sql = `
     UPDATE "orderNotes"
@@ -119,18 +130,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
   const { rows } = await pool.query(sql, vals);
   const r = rows[0];
 
-  // ────────────────────────── notify customer if a staff note became visible ──────────────────────────
+  // notify customer if a staff note became visible
   try {
     const wasVisible = cur.visibleToCustomer === true;
     const nowVisible = r.visibleToCustomer === true;
     if (!wasVisible && nowVisible && (r.authorRole === "staff" || cur.authorRole === "staff")) {
-      // Use the updated body if provided, otherwise decrypt the previous one
       const noteContent =
         typeof body.note === "string"
           ? body.note
           : (() => { try { return decryptSecretNode(r.note); } catch { return ""; } })();
 
-      // Resolve order meta and target client
       const { rows: orderRows } = await pool.query(
         `SELECT "orderKey", country, "clientId"
            FROM orders
@@ -140,6 +149,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
       );
       const order = orderRows[0] || {};
       const key = order.orderKey ?? String(r.orderId).slice(-6);
+
       const esc = (s: string) =>
         s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const message =
@@ -152,7 +162,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
         message,
         variables: { order_number: String(key), note_content: noteContent },
         country: order.country ?? null,
-        trigger: "user_only_email",                 // suppress admin fan-out
+        trigger: "user_only_email",
         channels: ["telegram", "in_app", "email"],
         clientId: order.clientId ?? null,
         userId: null,
@@ -180,7 +190,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
   );
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { noteId: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ noteId: string }> }
+) {
+  const { noteId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -188,7 +203,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { noteId: s
   const { rowCount } = await pool.query(
     `DELETE FROM "orderNotes"
       WHERE id = $1 AND "organizationId" = $2`,
-    [params.noteId, organizationId],
+    [noteId, organizationId],
   );
   if (!rowCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

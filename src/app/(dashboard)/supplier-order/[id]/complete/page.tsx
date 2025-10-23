@@ -1,8 +1,8 @@
-// NEW FILE: src/app/(dashboard)/supplier-order/[id]/complete/page.tsx
+// src/app/(dashboard)/supplier-order/[id]/complete/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -30,23 +30,27 @@ import { Edit, X } from "lucide-react";
 
 type Row = {
   productId: string;
-  variationId: string | null;     // ← add this
+  variationId: string | null;
   title: string;
   sku: string;
   quantity: number;
   received: number;
 };
 
-type CatalogItem = { id: string; variationId: string | null; title: string; sku: string }
+type CatalogItem = { id: string; variationId: string | null; title: string; sku: string };
 
 type Warehouse = { id: string; name: string; countries: string[] };
 type GridCell = { ordered: number; received: number };
 type Grid = Record<string, Record<string, GridCell>>; // wid -> country -> cell
 type SupplierInfo = { name: string | null; email: string | null; phone: string | null };
 
-export default function ReceiveOrderPage({ params }: { params: { id: string } }) {
+// helper: consistent key for rows/grids
+const keyForRow = (r: Row) => r.variationId ?? r.productId;
+
+export default function ReceiveOrderPage() {
   const router = useRouter();
-  const orderId = params.id;
+  const params = useParams<{ id?: string | string[] }>();
+  const orderId = Array.isArray(params?.id) ? params.id?.[0] ?? "" : params?.id ?? "";
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
@@ -57,28 +61,34 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
   // Drawer state (per-product receive allocations)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null); // key is variationId ?? productId
   const [perProductGrids, setPerProductGrids] = useState<Record<string, Grid>>({});
-  //perProductGrids: productId -> warehouseId -> country -> { ordered, received }
+  // perProductGrids: key -> warehouseId -> country -> { ordered, received }
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
 
+  // load catalog (for proper titles/skus for variants)
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/products?page=1&pageSize=1000&ownedOnly=1', { cache: 'no-store' });
+        const res = await fetch("/api/products?page=1&pageSize=1000&ownedOnly=1", { cache: "no-store" });
         if (!res.ok) return;
         const j = await res.json();
         const flat = Array.isArray(j?.productsFlat) ? j.productsFlat : [];
-        setCatalog(flat.map((p: any) => ({
-          id: p.id,
-          variationId: p.variationId ?? null,
-          title: p.title,
-          sku: p.sku,
-        })));
-      } catch { }
+        setCatalog(
+          flat.map((p: any) => ({
+            id: p.id,
+            variationId: p.variationId ?? null,
+            title: p.title,
+            sku: p.sku,
+          }))
+        );
+      } catch {
+        // noop
+      }
     })();
   }, []);
 
+  // rehydrate row titles/skus from catalog when both are loaded
   useEffect(() => {
     if (!catalog.length || !rows.length) return;
     setRows(prev =>
@@ -91,18 +101,19 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
     );
   }, [catalog, rows.length]);
 
+  // load order + cart lines
   useEffect(() => {
+    if (!orderId) return;
     const ctrl = new AbortController();
     (async () => {
       try {
-        // 1) Load order to get the supplierCartId
+        // 1) Load order to get the supplierCartId (and supplier info)
         const orderRes = await fetch(`/api/suppliersOrder/${orderId}`, {
           cache: "no-store",
           signal: ctrl.signal,
         });
         if (!orderRes.ok) throw new Error("Failed to load order");
         const { order } = await orderRes.json();
-        // Extract supplier info defensively from either nested or flat fields
         const sup: SupplierInfo = {
           name: order?.supplier?.name ?? order?.supplierName ?? order?.name ?? null,
           email: order?.supplier?.email ?? order?.supplierEmail ?? order?.email ?? null,
@@ -110,9 +121,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
         };
         setSupplier(sup);
         const cartId: string = order?.supplierCartId;
-        if (!cartId) {
-          throw new Error("Order has no supplier cart");
-        }
+        if (!cartId) throw new Error("Order has no supplier cart");
 
         // 2) Load cart lines for this order
         const linesRes = await fetch(`/api/suppliersCart/${cartId}`, {
@@ -129,17 +138,17 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
         for (const it of per) {
           const pid = it.productId ?? it.id;
           const vid = it.variationId ?? null;
-          const key = `${pid}:${vid ?? "base"}`;
+          const k = `${pid}:${vid ?? "base"}`;
           const qty = Number(it.quantity ?? 0) || 0;
           const rec = Number(it.received ?? 0) || 0;
 
-          const cur = byKey.get(key);
+          const cur = byKey.get(k);
           if (!cur) {
-            byKey.set(key, {
+            byKey.set(k, {
               productId: pid,
               variationId: vid,
-              title: it.title,     // temporary; we’ll rehydrate with the variant’s own
-              sku: it.sku,         // temporary
+              title: it.title, // temporary; rehydrated later
+              sku: it.sku,     // temporary
               quantity: qty,
               received: rec,
             });
@@ -158,7 +167,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
     return () => ctrl.abort();
   }, [orderId]);
 
-  // Ensure warehouses list (same API used in creation view)
+  // Ensure warehouses list
   const ensureWarehouses = async (): Promise<Warehouse[]> => {
     if (warehouses.length) return warehouses;
     const res = await fetch("/api/warehouses", {
@@ -173,18 +182,13 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
   };
 
   // Build a per-warehouse/country grid using ONLY warehouses/countries present in `resultLines`
-  const buildGridForProduct = (idOrVariantId: string): Grid => {
+  const buildGridForKey = (key: string): Grid => {
     const base: Grid = {};
 
-    // If the value matches a variationId in the API lines, prefer variant-level filtering.
-    const matchByVariant = resultLines.some(
-      (rl: any) => (rl.variationId ?? null) === idOrVariantId
-    );
-
+    // If key matches any variationId in lines, treat as variant key; else treat as productId
+    const matchesVariant = resultLines.some((rl: any) => (rl.variationId ?? null) === key);
     const lines = resultLines.filter((rl: any) =>
-      matchByVariant
-        ? (rl.variationId ?? null) === idOrVariantId
-        : (rl.productId ?? rl.id) === idOrVariantId
+      matchesVariant ? (rl.variationId ?? null) === key : (rl.productId ?? rl.id) === key
     );
 
     for (const r of lines) {
@@ -201,18 +205,18 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
   const sumGrid = (g?: Grid) =>
     g
       ? Object.values(g).reduce(
-        (acc, byCt) => acc + Object.values(byCt).reduce((s, cell) => s + (Number(cell.received) || 0), 0),
-        0
-      )
+          (acc, byCt) => acc + Object.values(byCt).reduce((s, cell) => s + (Number(cell.received) || 0), 0),
+          0
+        )
       : 0;
+
   const sumGridOrdered = (g?: Grid) =>
     g
       ? Object.values(g).reduce(
-        (acc, byCt) => acc + Object.values(byCt).reduce((s, cell) => s + (Number(cell.ordered) || 0), 0),
-        0
-      )
+          (acc, byCt) => acc + Object.values(byCt).reduce((s, cell) => s + (Number(cell.ordered) || 0), 0),
+          0
+        )
       : 0;
-
 
   const allMatched = useMemo(
     () => rows.every((r) => Number(r.received) === Number(r.quantity)),
@@ -221,13 +225,11 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
 
   const markAllGood = async () => {
     try {
-      // Ensure every row builds its grid by variant when available
       setPerProductGrids((prev) => {
         const next = { ...prev };
         for (const r of rows) {
-          const key = (r as any).variationId ?? r.productId; // prefer variant
-          const existing = next[key] ?? buildGridForProduct(key);
-
+          const key = keyForRow(r);
+          const existing = next[key] ?? buildGridForKey(key);
           const cloned: Grid = {};
           for (const [wid, byCt] of Object.entries(existing)) {
             cloned[wid] = {};
@@ -241,22 +243,21 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
         return next;
       });
 
-      // Aggregate row-level "received" to match ordered
       setRows((prev) => prev.map((r) => ({ ...r, received: r.quantity })));
     } catch (e: any) {
       toast.error(e?.message || "Could not mark as received");
     }
   };
 
-  // Open drawer for a product, populate grid if needed
-  const openReceiveDrawer = async (pid: string) => {
+  // Open drawer for a product, using the consistent key
+  const openReceiveDrawer = async (key: string) => {
     try {
-      await ensureWarehouses(); // for names; rendering still filters by `result`
+      await ensureWarehouses();
       setPerProductGrids((prev) => {
-        if (prev[pid]) return prev; // already built/edited
-        return { ...prev, [pid]: buildGridForProduct(pid) };
+        if (prev[key]) return prev;
+        return { ...prev, [key]: buildGridForKey(key) };
       });
-      setEditingProductId(pid);
+      setEditingProductId(key);
       setDrawerOpen(true);
     } catch (e: any) {
       toast.error(e?.message || "Could not open receive editor");
@@ -266,15 +267,14 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
   // Change a single cell's received value (clamped between 0 and ordered)
   const changeReceived = (wid: string, country: string, value: number) => {
     if (!editingProductId) return;
-    const pid = editingProductId;
     setPerProductGrids((prev) => {
-      const grid = prev[pid] ?? {};
+      const grid = prev[editingProductId] ?? {};
       const byCt = grid[wid] ?? {};
       const cell = byCt[country] ?? { ordered: 0, received: 0 };
       const n = Math.max(0, Math.min(Number(cell.ordered) || 0, Number.isFinite(value) ? value : 0));
       return {
         ...prev,
-        [pid]: {
+        [editingProductId]: {
           ...grid,
           [wid]: {
             ...byCt,
@@ -285,26 +285,22 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
     });
   };
 
-  // Save drawer: update aggregated "rows.received" for the product
+  // Save drawer: update aggregated "rows.received" for the matching key (variant or product)
   const saveReceive = () => {
     if (!editingProductId) return;
-    const pid = editingProductId;
-    const total = sumGrid(perProductGrids[pid]);
-    setRows((prev) => prev.map((r) => (r.productId === pid ? { ...r, received: total } : r)));
+    const total = sumGrid(perProductGrids[editingProductId]);
+    setRows((prev) =>
+      prev.map((r) => (keyForRow(r) === editingProductId ? { ...r, received: total } : r))
+    );
     setDrawerOpen(false);
     setEditingProductId(null);
   };
 
-  /**
-   * Build the detailed "received" payload:
-   * - Prefer the edited drawer grid (perProductGrids) for each product.
-   * - If a product has no grid yet, derive it from `resultLines` (API response)
-   *   so we still send warehouse/country breakdowns.
-   */
+  // Build payload for completion (warehouse/country breakdown)
   const buildReceivedPayload = () => {
     type Line = {
       productId: string;
-      variationId?: string | null;   // ← include in payload
+      variationId?: string | null;
       warehouseId: string;
       country: string;
       quantityOrdered: number;
@@ -314,11 +310,8 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
     const out: Line[] = [];
 
     for (const r of rows) {
-      // Prefer the variant as the identity key when present
-      const key = (r as any).variationId ?? r.productId;
-
-      // Use the edited grid if it exists for this key; otherwise build from API result
-      const grid: Grid = perProductGrids[key] ?? buildGridForProduct(key);
+      const key = keyForRow(r);
+      const grid: Grid = perProductGrids[key] ?? buildGridForKey(key);
 
       for (const [wid, byCt] of Object.entries(grid)) {
         for (const [ct, cell] of Object.entries(byCt)) {
@@ -328,7 +321,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
 
           out.push({
             productId: r.productId,
-            variationId: (r as any).variationId ?? null,   // ← carry through variant
+            variationId: r.variationId ?? null,
             warehouseId: wid,
             country: ct,
             quantityOrdered: ordered,
@@ -346,7 +339,6 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
       setSubmitting(true);
       const payload = {
         status: "completed",
-        // include per-warehouse & per-country lines
         received: buildReceivedPayload(),
       };
       const res = await fetch(`/api/suppliersOrder/${orderId}/complete`, {
@@ -395,6 +387,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
           </div>
         </CardContent>
       </Card>
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Received Items</h1>
         <div className="flex gap-2">
@@ -427,10 +420,11 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
               </TableRow>
             ) : rows.length ? (
               rows.map((r) => {
-                const grid = perProductGrids[r.productId];
+                const key = keyForRow(r);
+                const grid = perProductGrids[key];
                 const totalReceived = grid ? sumGrid(grid) : r.received;
                 return (
-                  <TableRow key={`${r.productId}:${r.variationId ?? 'base'}`}>
+                  <TableRow key={`${r.productId}:${r.variationId ?? "base"}`}>
                     <TableCell className="font-medium">{r.title}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{r.sku}</TableCell>
                     <TableCell className="text-right">{r.quantity}</TableCell>
@@ -439,14 +433,14 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
                         variant="outline"
                         size="sm"
                         className="ml-auto flex items-center gap-2"
-                        onClick={() => openReceiveDrawer(r.variationId ?? r.productId)}
+                        onClick={() => openReceiveDrawer(key)}
                       >
                         <span>{totalReceived ?? 0}</span>
                         <Edit className="h-4 w-4 text-gray-500" />
                       </Button>
                     </TableCell>
                   </TableRow>
-                )
+                );
               })
             ) : (
               <TableRow>
@@ -464,6 +458,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
           Warning: some received quantities do not match the ordered amounts.
         </p>
       )}
+
       {/* Drawer: per-warehouse/country received editor */}
       <Drawer
         open={drawerOpen}
@@ -486,7 +481,9 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
               <DrawerTitle className="text-base sm:text-lg">
                 Receive —{" "}
                 <span className="font-normal">
-                  {editingProductId ? rows.find((x) => x.productId === editingProductId)?.title : ""}
+                  {editingProductId
+                    ? rows.find((x) => keyForRow(x) === editingProductId)?.title
+                    : ""}
                 </span>
               </DrawerTitle>
               <DrawerClose asChild>

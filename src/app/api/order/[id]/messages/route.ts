@@ -4,7 +4,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import { sendNotification, NotificationChannel } from "@/lib/notifications";
+import { sendNotification, type NotificationChannel } from "@/lib/notifications";
 import { publish, lpushRecent } from "@/lib/pubsub";
 import { pusher } from "@/lib/pusher-server";
 
@@ -16,13 +16,13 @@ const messagesSchema = z.object({
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> } // Next 16
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   try {
-    const { id } = await params;
+    const { id } = await context.params;
     const since = req.nextUrl.searchParams.get("since");
 
     const baseSQL = `
@@ -51,7 +51,7 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -59,7 +59,8 @@ export async function POST(
   const { organizationId, userId } = ctx;
 
   try {
-    const { id } = params;
+    const { id } = await context.params;
+
     const isInternal = req.headers.get("x-is-internal") === "true";
     const raw = await req.json();
     const { message, clientId } = messagesSchema.parse({ ...raw, isInternal });
@@ -75,7 +76,7 @@ export async function POST(
       [msgId, id, clientId, message, isInternal],
     );
 
-    // Enrich with client email (handy for dashboards / notifications)
+    // Enrich with client email
     const {
       rows: [cliInfo],
     } = await pool.query(
@@ -85,18 +86,12 @@ export async function POST(
     const event = { ...saved, email: cliInfo?.email ?? null };
 
     /* ── realtime fan-out ─────────────────────────────────────────── */
-    // Upstash pub/sub for order thread listeners (UI, etc.)
     await publish(`order:${id}`, event);
-
-    // Keep a warm replay buffer (per order)
     await lpushRecent(`order:${id}:recent`, event, 50, 7 * 24 * 3600);
-
-    // Mirror to your external UI via Pusher
     await pusher.trigger(`order-${id}`, "new-message", event);
 
-    /* Push INTERNAL admin replies straight to the Telegram bot */
+    /* Push INTERNAL admin replies to the bot */
     if (isInternal) {
-      // Lookup orderKey once (good for bot + replay lists)
       const {
         rows: [ordInfo],
       } = await pool.query(
@@ -112,14 +107,12 @@ export async function POST(
         createdAt: saved.createdAt,
       };
 
-      // Realtime ping to the bot’s Pusher channel
       await pusher.trigger(
         `org-${organizationId}-client-${clientId}`,
         "admin-message",
         botPayload,
       );
 
-      // Optional: also keep a per-client recent list (handy for future catch-up UIs)
       await lpushRecent(
         `orders:client:${clientId}:recent`,
         { ...event, orderKey: ordInfo?.orderKey },
@@ -128,7 +121,7 @@ export async function POST(
       );
     }
 
-    /* ── notifications (unchanged) ───────────────────────────────── */
+    /* ── notifications ───────────────────────────────────────────── */
     if (!isInternal) {
       const {
         rows: [ord],

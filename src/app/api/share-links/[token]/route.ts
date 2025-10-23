@@ -1,19 +1,22 @@
+// /src/app/api/share-links/[token]/route.ts
 export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { getContext } from "@/lib/context";
 
-export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ token: string }> } // Next 16: params is a Promise
+) {
+  const { token } = await context.params;
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { userId } = ctx;
-  const token = params.token;
 
   try {
-
-    // Fetch share link
+    // 1) Share link
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .select(["id", "warehouseId", "creatorUserId", "status"])
@@ -22,10 +25,13 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       .executeTakeFirst();
 
     if (!shareLink) {
-      return NextResponse.json({ error: "Share link not found or inactive" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Share link not found or inactive" },
+        { status: 404 }
+      );
     }
 
-    // Verify user is a recipient
+    // 2) Recipient check
     const recipient = await db
       .selectFrom("warehouseShareRecipient")
       .select("id")
@@ -34,10 +40,13 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       .executeTakeFirst();
 
     if (!recipient) {
-      return NextResponse.json({ error: "You are not a recipient of this share link" }, { status: 403 });
+      return NextResponse.json(
+        { error: "You are not a recipient of this share link" },
+        { status: 403 }
+      );
     }
 
-    // Fetch warehouse details
+    // 3) Warehouse details
     const warehouse = await db
       .selectFrom("warehouse")
       .select(["id", "name", "countries"])
@@ -48,7 +57,18 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       return NextResponse.json({ error: "Warehouse not found" }, { status: 404 });
     }
 
-    // Fetch shared products
+    const warehouseCountries =
+      Array.isArray(warehouse.countries)
+        ? warehouse.countries
+        : (() => {
+            try {
+              return JSON.parse((warehouse as any).countries || "[]");
+            } catch {
+              return [];
+            }
+          })();
+
+    // 4) Shared products
     const sharedProducts = await db
       .selectFrom("sharedProduct")
       .innerJoin("products", "products.id", "sharedProduct.productId")
@@ -64,7 +84,23 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       .where("sharedProduct.shareLinkId", "=", shareLink.id)
       .execute();
 
-    // Fetch creator details
+    const products = sharedProducts.map((p) => ({
+      productId: p.productId,
+      variationId: p.variationId,
+      title: p.variationId ? `${p.productTitle} - ${p.variationSku}` : p.productTitle,
+      cost:
+        typeof p.cost === "string"
+          ? (() => {
+              try {
+                return JSON.parse(p.cost as unknown as string);
+              } catch {
+                return p.cost;
+              }
+            })()
+          : p.cost,
+    }));
+
+    // 5) Creator details
     const creator = await db
       .selectFrom("user")
       .select(["id", "email", "name"])
@@ -79,19 +115,14 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
           warehouse: {
             id: warehouse.id,
             name: warehouse.name,
-            countries: JSON.parse(warehouse.countries),
+            countries: warehouseCountries,
           },
           creator: {
             id: creator?.id,
             email: creator?.email,
             name: creator?.name,
           },
-          products: sharedProducts.map((p) => ({
-            productId: p.productId,
-            variationId: p.variationId,
-            title: p.variationId ? `${p.productTitle} - ${p.variationSku}` : p.productTitle,
-            cost: p.cost,
-          })),
+          products,
         },
       },
       { status: 200 }

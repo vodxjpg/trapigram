@@ -2,48 +2,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
+import { z } from "zod";
+
+export const runtime = "nodejs";
+
+const BodySchema = z.object({
+  name: z.string().min(1),
+  countries: z.array(z.string().min(1)).min(1),
+  stock: z
+    .array(
+      z.object({
+        productId: z.string().min(1),
+        variationId: z.string().min(1).nullable().optional(),
+        country: z.string().min(1),
+        quantity: z.coerce.number().int().nonnegative(),
+      })
+    )
+    .optional(),
+});
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id: warehouseId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { tenantId, organizationId } = ctx;
 
   try {
-    const warehouseId = params.id;
-    const { name, countries, stock } = await req.json();
-
-    if (!name || !Array.isArray(countries) || countries.length === 0) {
-      return NextResponse.json(
-        { error: "Name and countries (non-empty array) are required" },
-        { status: 400 },
-      );
+    const parsed = BodySchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const countriesJson = JSON.stringify(countries);
+    const { name, countries, stock } = parsed.data;
 
-    // Update only within same tenant/org
     const { rows } = await pool.query(
       `
       UPDATE warehouse
-      SET
-        name = $1,
-        countries = $2::jsonb,
-        "updatedAt" = NOW()
-      WHERE id = $3
-        AND "tenantId" = $4
-        AND "organizationId" = $5
-      RETURNING *
+         SET name = $1,
+             countries = $2::jsonb,
+             "updatedAt" = NOW()
+       WHERE id = $3
+         AND "tenantId" = $4
+         AND "organizationId" = $5
+       RETURNING *
       `,
-      [name, countriesJson, warehouseId, tenantId, organizationId],
+      [name, JSON.stringify(countries), warehouseId, tenantId, organizationId]
     );
 
-    if (rows.length === 0) {
+    if (!rows.length) {
       return NextResponse.json(
         { error: `Warehouse ${warehouseId} not found` },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -51,14 +64,13 @@ export async function PUT(
 
     // Replace stock if provided
     if (stock) {
-      if (!Array.isArray(stock)) {
-        return NextResponse.json({ error: "Stock must be an array" }, { status: 400 });
-      }
       await pool.query(
-        `DELETE FROM "warehouseStock" WHERE "warehouseId" = $1 AND "tenantId" = $2 AND "organizationId" = $3`,
-        [warehouseId, tenantId, organizationId],
+        `DELETE FROM "warehouseStock"
+          WHERE "warehouseId" = $1 AND "tenantId" = $2 AND "organizationId" = $3`,
+        [warehouseId, tenantId, organizationId]
       );
 
+      // Insert new stock rows
       for (const entry of stock) {
         await pool.query(
           `
@@ -73,12 +85,12 @@ export async function PUT(
           [
             warehouseId,
             entry.productId,
-            entry.variationId || null,
+            entry.variationId ?? null,
             entry.country,
             entry.quantity,
             organizationId,
             tenantId,
-          ],
+          ]
         );
       }
     }
@@ -92,25 +104,28 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id: warehouseId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { tenantId, organizationId } = ctx;
 
   try {
-    const warehouseId = params.id;
     const { rowCount } = await pool.query(
-      `DELETE FROM warehouse WHERE id = $1 AND "tenantId" = $2 AND "organizationId" = $3`,
-      [warehouseId, tenantId, organizationId],
+      `DELETE FROM warehouse
+        WHERE id = $1 AND "tenantId" = $2 AND "organizationId" = $3`,
+      [warehouseId, tenantId, organizationId]
     );
 
     if (rowCount === 0) {
       return NextResponse.json(
         { error: `Warehouse ${warehouseId} not found or unauthorized` },
-        { status: 404 },
+        { status: 404 }
       );
     }
+
     return NextResponse.json({ message: "Warehouse deleted" }, { status: 200 });
   } catch (error) {
     console.error("[DELETE /api/warehouses/[id]] error:", error);

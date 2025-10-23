@@ -135,7 +135,5 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# Vercel config (keep local)
-vercel.json
 #Certs
 certs/

@@ -1,21 +1,19 @@
+// src/app/api/order/[id]/messages/sse-url/route.ts
 import { NextResponse } from "next/server";
 import { sseURL } from "@/lib/upstash";
 
+export const runtime = "nodejs";
+
 /**
  * GET /api/order/[id]/messages/sse-url
- *
- * Returns a JSON payload: { url: "https://…/sse/…?topic=order:<id>" }
- * that the front‑end can feed into `new EventSource(url)`.
- *
- * You may add whatever auth / permission checks you need before
- * returning the URL.
+ * Returns { url } for EventSource.
  */
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> }
 ) {
-  // TODO: enforce permissions here if required
-
-  const url = sseURL(`order:${params.id}`);   // read‑only stream URL
+  const { id } = await context.params;
+  // TODO: permission checks if needed
+  const url = sseURL(`order:${id}`);
   return NextResponse.json({ url });
 }

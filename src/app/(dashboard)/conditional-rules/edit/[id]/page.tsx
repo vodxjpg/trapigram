@@ -1,7 +1,15 @@
+// (where this file lives under .../[id]/page.tsx)
+import { notFound } from "next/navigation";
 import RuleFormLoader from "../../components/RuleFormLoader";
 
-export default function EditRulePage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default async function EditRulePage({
+  params,
+}: {
+  params?: Promise<{ id?: string }>;
+}) {
+  const p = (params ? await params : {}) as { id?: string };
+  const id = p.id?.trim();
+  if (!id) return notFound();
 
   return (
     <div className="p-4 md:p-8 space-y-6">

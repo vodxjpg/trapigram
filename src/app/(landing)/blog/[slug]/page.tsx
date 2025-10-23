@@ -9,12 +9,15 @@ import {
 } from "@/lib/wp";
 import Toc from "./toc";
 
-type Props = { params: { slug: string } };
+type Params = Promise<{ slug: string }>;
 
 export const dynamic = "force-static"; // ISR via fetch caching
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const post = await getPostBySlug(params.slug);
+export async function generateMetadata(
+  { params }: { params: Params }
+): Promise<Metadata> {
+  const { slug } = await params;
+  const post = await getPostBySlug(slug);
   if (!post) return {};
 
   const site = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.trapyfy.com").replace(/\/+$/, "");
@@ -22,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const headHtml =
     (await getRankMathHeadForWpUrl(post.wpUrl)) ??
-    (await getRankMathHeadForSlug(params.slug));
+    (await getRankMathHeadForSlug(slug));
 
   const parsed = parseRankMathHead(headHtml);
 
@@ -30,7 +33,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const description =
     parsed.description ?? summarize(stripHtml(post.excerptHtml || post.title));
 
-  // Prefer RM og image if present, else featured image
   const ogImageUrl = parsed.og?.image?.url || post.featuredImageUrl;
   const ogImages = ogImageUrl
     ? [
@@ -43,14 +45,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       ]
     : undefined;
 
-  // Build "other" metas to include robots exactly as Rank Math provided
   const other: Record<string, string> = {};
   if (parsed.robots) other["robots"] = parsed.robots;
 
   return {
     title,
     description,
-    alternates: { canonical: canonicalFrontend }, // keep canonical on the frontend domain
+    alternates: { canonical: canonicalFrontend },
     openGraph: {
       title: parsed.og?.title || title,
       description: parsed.og?.description || description,
@@ -71,16 +72,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function PostPage({ params }: Props) {
-  const post = await getPostBySlug(params.slug);
+export default async function PostPage(
+  { params }: { params: Params }
+) {
+  const { slug } = await params;
+  const post = await getPostBySlug(slug);
   if (!post) notFound();
 
   const headHtml =
     (await getRankMathHeadForWpUrl(post.wpUrl)) ??
-    (await getRankMathHeadForSlug(params.slug));
+    (await getRankMathHeadForSlug(slug));
   const parsed = parseRankMathHead(headHtml);
 
-  // add ids to h2/h3 and collect ToC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
@@ -125,7 +128,7 @@ export default async function PostPage({ params }: Props) {
         <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
       ))}
 
-      <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="mt-10 grid gap-10 lg:grid-cols:[minmax(0,1fr)_320px] lg:grid-cols-[minmax(0,1fr)_320px]">
         <main
           id="main-content"
           className="article-body max-w-none"

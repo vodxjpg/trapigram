@@ -1,30 +1,21 @@
-/* ────────────────────────────────────────────────────────────────
-   src/app/(dashboard)/affiliates/products/components/level-points-management.tsx
-   (FULL FILE)
-───────────────────────────────────────────────────────────────── */
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { PointsManagement } from "./points-management";
-import { CountryPts, PointsByLvl } from "@/lib/affiliatePoints";
+
+/* local types (avoid missing module) */
+type CountryPts = { regular: number; sale: number | null };
+export type PointsByLvl = Record<string, Record<string, CountryPts>>;
 
 interface Props {
-  title   : string;
+  title: string;
   countries: string[];
-  levels  : { id: string; name: string }[];
-  value   : PointsByLvl;
+  levels: { id: string; name: string }[];
+  value: PointsByLvl;
   onChange: (m: PointsByLvl) => void;
-
-  /* NEW — cost handling */
-  costData    : Record<string, number>;
+  costData: Record<string, number>;
   onCostChange: (m: Record<string, number>) => void;
 }
 
@@ -41,17 +32,17 @@ export function LevelPointsManagement({
 
   /* ensure object exists for current tab */
   useEffect(() => {
-    if (!value[active]) {
-      const blank = Object.fromEntries(
-        countries.map((c) => [c, { regular: 0, sale: null }]),
-      ) as Record<string, CountryPts>;
-      onChange({ ...value, [active]: blank });
+    const current = value?.[active];
+    if (!current) {
+      const blank = Object.fromEntries(countries.map((c) => [c, { regular: 0, sale: null }])) as Record<string, CountryPts>;
+      onChange({ ...(value || {}), [active]: blank });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, countries]);
 
-  const updatePoints = (m: Record<string, CountryPts>) =>
-    onChange({ ...value, [active]: m });
+  const updatePoints = (m: Record<string, CountryPts>) => onChange({ ...(value || {}), [active]: m });
+
+  const safeValue = value?.[active] ?? ({} as Record<string, CountryPts>);
 
   return (
     <Card className="p-4 space-y-4">
@@ -72,21 +63,14 @@ export function LevelPointsManagement({
         </Select>
       </div>
 
-      {value[active] && (
-        <PointsManagement
-          title={`Prices for ${
-            active === "default"
-              ? "all levels"
-              : levels.find((x) => x.id === active)?.name
-          }`}
-          countries={countries}
-          /* fixed prop names + cost support */
-          pointsData={value[active]}
-          onPointsChange={updatePoints}
-          costData={costData}
-          onCostChange={onCostChange}
-        />
-      )}
+      <PointsManagement
+        title={`Prices for ${active === "default" ? "all levels" : levels.find((x) => x.id === active)?.name ?? ""}`}
+        countries={countries}
+        pointsData={safeValue}
+        onPointsChange={updatePoints}
+        costData={costData}
+        onCostChange={onCostChange}
+      />
     </Card>
   );
 }

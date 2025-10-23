@@ -1,10 +1,8 @@
 // src/app/api/affiliate/levels/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-
-
 
 /* ─────────────────── zod schema ─────────────────── */
 const levelSchema = z.object({
@@ -17,14 +15,13 @@ const levelSchema = z.object({
 /* ─────────────────── GET (single level) ─────────────────── */
 export async function GET(
   req: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }, // ← Next 16: Promise
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  // ⬇️  params is async now
-  const { id } = await context.params;
+  const { id } = await context.params; // ← await it
 
   const { rows } = await pool.query(
     `SELECT * FROM "affiliateLevels"
@@ -40,7 +37,7 @@ export async function GET(
 /* ─────────────────── PATCH (update) ─────────────────── */
 export async function PATCH(
   req: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }, // ← Next 16
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -80,7 +77,7 @@ export async function PATCH(
 /* ─────────────────── DELETE ─────────────────── */
 export async function DELETE(
   req: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }, // ← Next 16
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;

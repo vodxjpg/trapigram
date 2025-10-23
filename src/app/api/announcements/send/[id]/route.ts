@@ -1,14 +1,15 @@
-// src/app/api/announcements/send/[id]/route.ts
+// /src/app/api/announcements/send/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { publish } from "@/lib/pubsub";    // ✅ add this
+import { publish } from "@/lib/pubsub";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -18,7 +19,7 @@ export async function PATCH(
       `UPDATE announcements
           SET sent = TRUE, "updatedAt" = NOW()
         WHERE id = $1 AND "organizationId" = $2
-    RETURNING id, title, content, "deliveryDate", countries, sent, "updatedAt"`,
+      RETURNING id, title, content, "deliveryDate", countries, sent, "updatedAt"`,
       [id, organizationId],
     );
 
@@ -31,7 +32,7 @@ export async function PATCH(
       try { return JSON.parse(row.countries || "[]"); } catch { return []; }
     })();
 
-    // ------- NEW: publish one event -------
+    // publish one event for downstream consumers
     await publish(`announcements:org:${organizationId}`, {
       id: row.id,
       orgId: organizationId,
@@ -41,7 +42,6 @@ export async function PATCH(
       deliveryDate: row.deliveryDate,
       updatedAt: row.updatedAt,
     });
-    // --------------------------------------
 
     return NextResponse.json(row);
   } catch (error: any) {

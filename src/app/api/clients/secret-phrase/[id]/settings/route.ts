@@ -1,15 +1,19 @@
+// src/app/api/clients/secret-phrase/[id]/settings/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-type Params = { params: Promise<{ id: string }> }; // id = Telegram userId
+/** Next 15+ passes params as a Promise */
+type Ctx = { params: Promise<{ id: string }> }; // id = Telegram userId
 
 const patchSchema = z.object({
   enabled: z.boolean().optional(),
   reverifyAfterDays: z.number().int().min(1).max(365).optional(),
-  forceAt: z.string().datetime().optional(),  // ISO 8601
-  forceNow: z.boolean().optional(),           // convenience
+  forceAt: z.string().datetime().optional(), // ISO 8601
+  forceNow: z.boolean().optional(),          // convenience
 });
 
 async function findClientRow(userId: string, organizationId: string) {
@@ -27,11 +31,11 @@ async function findClientRow(userId: string, organizationId: string) {
 }
 
 /* GET one client settings */
-export async function GET(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+export async function GET(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const c = await findClientRow(userId, organizationId);
@@ -49,22 +53,25 @@ export async function GET(req: NextRequest, { params }: Params) {
 }
 
 /* PATCH one client settings */
-export async function PATCH(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const body = patchSchema.parse(await req.json());
     const current = await findClientRow(userId, organizationId);
     if (!current) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
-    const nextEnabled = body.enabled ?? current.secretPhraseEnabled;
-    const nextDays = body.reverifyAfterDays ?? current.secretPhraseReverifyDays;
-    const nextForceAt = body.forceNow
-      ? new Date()
-      : (body.forceAt ? new Date(body.forceAt) : current.secretPhraseForceAt);
+    const nextEnabled =
+      body.enabled ?? current.secretPhraseEnabled;
+    const nextDays =
+      body.reverifyAfterDays ?? current.secretPhraseReverifyDays;
+    const nextForceAt =
+      body.forceNow
+        ? new Date()
+        : (body.forceAt ? new Date(body.forceAt) : current.secretPhraseForceAt);
 
     const updSql = `
       UPDATE public.clients

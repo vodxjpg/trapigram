@@ -1,26 +1,29 @@
-// /home/zodx/Desktop/Trapyfy/src/app/api/announcements/[id]/route.ts
+// /src/app/api/announcements/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import purify from "@/lib/dompurify";
 import { getContext } from "@/lib/context";
 
-// nothing
 const announcementUpdateSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }).optional(),
   content: z.string().min(1, { message: "Content is required." }).optional(),
   deliveryDate: z.string().nullable().optional(),
-  countries: z.string().optional(),
+  countries: z.string().optional(), // JSON string
   sent: z.boolean().optional(),
 });
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = params;
     const query = `
       SELECT id, "organizationId", title, content, "deliveryDate", countries, sent, "createdAt", "updatedAt"
       FROM announcements
@@ -31,7 +34,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: "Announcement not found" }, { status: 404 });
     }
     const announcement = result.rows[0];
-    announcement.countries = JSON.parse(announcement.countries); // Parse JSON string to array
+    try {
+      announcement.countries = JSON.parse(announcement.countries ?? "[]");
+    } catch {
+      announcement.countries = [];
+    }
     return NextResponse.json(announcement);
   } catch (error: any) {
     console.error("[GET /api/announcements/[id]] error:", error);
@@ -39,13 +46,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = params;
     const body = await req.json();
     const parsedAnnouncement = announcementUpdateSchema.parse(body);
 
@@ -57,7 +68,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (value !== undefined) {
         if (key === "content") {
           updates.push(`"${key}" = $${paramIndex++}`);
-          values.push(purify.sanitize(value as string)); // Use configured purify
+          values.push(purify.sanitize(value as string));
         } else {
           updates.push(`"${key}" = $${paramIndex++}`);
           values.push(value);
@@ -81,7 +92,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Announcement not found" }, { status: 404 });
     }
-    return NextResponse.json(result.rows[0]);
+
+    // normalize countries to array on the response
+    const row = result.rows[0];
+    try {
+      row.countries = JSON.parse(row.countries ?? "[]");
+    } catch {
+      row.countries = [];
+    }
+    return NextResponse.json(row);
   } catch (error: any) {
     console.error("[PATCH /api/announcements/[id]] error:", error);
     if (error instanceof z.ZodError) {
@@ -91,13 +110,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = params;
     const query = `
       DELETE FROM announcements
       WHERE id = $1 AND "organizationId" = $2
