@@ -1,5 +1,14 @@
+// src/app/sitemap.xsl/route.ts
+
 export const dynamic = "force-static";
 export const revalidate = 600;
+
+function xslHeaders() {
+  return {
+    "Content-Type": "text/xsl; charset=utf-8", // important for some browsers
+    "Cache-Control": "public, s-maxage=600, stale-while-revalidate=86400",
+  };
+}
 
 export async function GET() {
   const xsl = `<?xml version="1.0" encoding="UTF-8"?>
@@ -57,10 +66,10 @@ export async function GET() {
     </html>
   </xsl:template>
 </xsl:stylesheet>`;
-  return new Response(xsl, {
-    headers: {
-      "Content-Type": "text/xsl; charset=utf-8", // important for some browsers
-      "Cache-Control": "public, s-maxage=600, stale-while-revalidate=86400",
-    },
-  });
+  return new Response(xsl, { headers: xslHeaders() });
+}
+
+// Serve HEAD with the same headers
+export async function HEAD() {
+  return new Response(null, { headers: xslHeaders() });
 }
