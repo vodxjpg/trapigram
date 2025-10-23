@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SettingsForm } from "./components/settings-form";
+import { SettingsForm } from "./settings-form";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 
@@ -20,7 +20,7 @@ export default function ClientAffiliateSettingsPage() {
   // check "settings" permission
   const {
     hasPermission: canSettings,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { affiliates: ["settings"] });
 
   // redirect away if not allowed
