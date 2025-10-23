@@ -43,6 +43,10 @@ export default function robots(): MetadataRoute.Robots {
           '/blog$',                          // the "/blog" index (no trailing slash)
           '/blog/',                          // "/blog/" and deeper
           '/blog/*',                         // any descendants under /blog/
+          '/sitemap$',                          // the "/sitemap" index (no trailing slash)
+          '/sitemap/',                          // "/sitemap/" and deeper
+          '/sitemap/*',                         // any descendants under /blog/
+          
         ],
       },
     ],
