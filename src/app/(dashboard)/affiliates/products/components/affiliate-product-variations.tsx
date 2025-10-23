@@ -1,7 +1,6 @@
-/* ────────────────────────────────────────────────────────────────
+/* ------------------------------------------------------------------
    src/app/(dashboard)/affiliates/products/components/affiliate-product-variations.tsx
-   (FULL FILE)
-───────────────────────────────────────────────────────────────── */
+------------------------------------------------------------------- */
 "use client";
 import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
@@ -20,13 +19,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FormLabel } from "@/components/ui/form";
 
-import { PointsManagement } from "./points-management";
 import { CostManagement } from "@/app/(dashboard)/products/components/cost-management";
 import { LevelRequirementSelect } from "./level-requirement-select";
 import { LevelPointsManagement } from "./level-points-management";
 import type { Attribute, Variation, Warehouse } from "@/types/product";
 
-/* helpers to create blank maps (unchanged) */
+/* helpers to create blank maps */
 const blankPtsFor = (
   countries: string[],
   levels: { id: string; name: string }[],
@@ -46,6 +44,10 @@ const blankCostFor = (countries: string[]): Record<string, number> =>
 type PointsByLvl = Record<string, Record<string, { regular: number; sale: number | null }>>;
 type CostMap = Record<string, number>;
 
+/**
+ * Variation from your shared type likely requires `regularPrice` and `salePrice`.
+ * Our extended type adds affiliate-specific maps.
+ */
 interface VariationExt extends Variation {
   prices: PointsByLvl;
   cost: CostMap;
@@ -62,7 +64,7 @@ interface Props {
   levels: { id: string; name: string }[];
 }
 
-/* image uploader (unchanged) */
+/* image uploader */
 function VariationImagePicker({
   value,
   onChange,
@@ -119,12 +121,14 @@ export function AffiliateProductVariations({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [skuDraft, setSkuDraft] = useState("");
 
-  /* ensure each variation has full nested maps (unchanged) */
+  /* ensure each variation has full nested maps */
   useEffect(() => {
     if (!countries.length || !warehouses.length || !levels.length) return;
     onVariationsChange((cur) =>
       cur.map((v) => {
         let changed = false;
+
+        // ensure prices map
         const prices: PointsByLvl = { ...v.prices };
         [...Object.keys(prices), ...levels.map((l) => l.id), "default"].forEach((lvl) => {
           if (!prices[lvl]) {
@@ -138,6 +142,8 @@ export function AffiliateProductVariations({
             }
           });
         });
+
+        // ensure cost map
         const cost: CostMap = { ...v.cost };
         countries.forEach((c) => {
           if (cost[c] === undefined) {
@@ -145,6 +151,8 @@ export function AffiliateProductVariations({
             changed = true;
           }
         });
+
+        // ensure stock map
         const stock: Record<string, Record<string, number>> = { ...v.stock };
         warehouses.forEach((w) => {
           if (!stock[w.id]) {
@@ -158,10 +166,28 @@ export function AffiliateProductVariations({
             }
           });
         });
-        return changed ? { ...v, prices, cost, stock } : v;
+
+        // ✅ ensure regularPrice / salePrice maps
+        const regularPrice: Record<string, number> = { ...(v as any).regularPrice };
+        const salePrice: Record<string, number | null> = { ...(v as any).salePrice };
+        countries.forEach((c) => {
+          if (regularPrice?.[c] === undefined) {
+            (regularPrice as any)[c] = 0;
+            changed = true;
+          }
+          if (salePrice?.[c] === undefined) {
+            (salePrice as any)[c] = null;
+            changed = true;
+          }
+        });
+
+        return changed
+          ? ({ ...v, prices, cost, stock, regularPrice, salePrice } as VariationExt)
+          : v;
       }),
     );
   }, [countries, warehouses, levels, onVariationsChange]);
+
 
   /* helpers */
   const label = (aid: string, tid: string) => {
@@ -356,8 +382,8 @@ export function AffiliateProductVariations({
                   levels={levels}
                   value={v.prices}
                   onChange={(map) => updatePoints(v.id, map)}
-                  costData={v.cost}                      /* NEW */
-                  onCostChange={(m) => updateCost(v.id, m)} /* NEW */
+                  costData={v.cost}
+                  onCostChange={(m) => updateCost(v.id, m)}
                 />
 
                 {/* COST (flat) */}
@@ -418,15 +444,17 @@ export function AffiliateProductVariations({
     </div>
   );
 
-  /* helper to auto-generate variations (unchanged logic) */
+  /* helper to auto-generate variations */
   function generateVariations() {
     if (attributes.every((a) => a.selectedTerms.length === 0)) {
       toast.error("Select attribute terms first");
       return;
     }
+
     const attrs = attributes
       .filter((a) => a.useForVariations && a.selectedTerms.length)
       .map((a) => ({ id: a.id, terms: a.selectedTerms }));
+
     const combos: Record<string, string>[] = [];
     const build = (i: number, cur: Record<string, string>) => {
       if (i === attrs.length) {
@@ -439,33 +467,47 @@ export function AffiliateProductVariations({
 
     const blankPtsByLvl = blankPtsFor(countries, levels);
     const blankCostMap = blankCostFor(countries);
-    const blankStockMap = warehouses.reduce(
+    const blankStockMap: Record<string, Record<string, number>> = warehouses.reduce(
       (acc, w) => ({
         ...acc,
-        [w.id]: w.countries.reduce((m, c) => ({ ...m, [c]: 0 }), {}),
+        [w.id]: w.countries.reduce((m, c) => ({ ...m, [c]: 0 }), {} as Record<string, number>),
       }),
-      {},
+      {} as Record<string, Record<string, number>>,
     );
 
-    const merged = combos.map((combo) => {
+    // ✅ country maps for regularPrice / salePrice
+    const blankRegularPrice: Record<string, number> = countries.reduce(
+      (acc, c) => ((acc[c] = 0), acc),
+      {} as Record<string, number>,
+    );
+    const blankSalePrice: Record<string, number | null> = countries.reduce(
+      (acc, c) => ((acc[c] = null), acc),
+      {} as Record<string, number | null>,
+    );
+
+    const merged: VariationExt[] = combos.map((combo) => {
       const existing = variations.find((v) =>
         Object.entries(combo).every(([k, vId]) => v.attributes[k] === vId),
       );
-      return (
-        existing || {
-          id: uuidv4(),
-          attributes: combo,
-          sku: `VAR-${uuidv4().slice(0, 8)}`,
-          image: null,
-          prices: JSON.parse(JSON.stringify(blankPtsByLvl)),
-          cost: JSON.parse(JSON.stringify(blankCostMap)),
-          minLevelId: null,
-          stock: JSON.parse(JSON.stringify(blankStockMap)),
-        }
-      );
+      if (existing) return existing;
+
+      return {
+        id: uuidv4(),
+        attributes: combo,
+        sku: `VAR-${uuidv4().slice(0, 8)}`,
+        image: null,
+        // ✅ match Variation type (per-country maps)
+        regularPrice: { ...blankRegularPrice },
+        salePrice: { ...blankSalePrice },
+        prices: JSON.parse(JSON.stringify(blankPtsByLvl)),
+        cost: JSON.parse(JSON.stringify(blankCostMap)),
+        minLevelId: null,
+        stock: JSON.parse(JSON.stringify(blankStockMap)),
+      } as VariationExt;
     });
 
     onVariationsChange(merged);
     toast.success(`Generated ${merged.length} variations`);
   }
+
 }
