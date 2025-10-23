@@ -8,77 +8,72 @@ import Pricing from "@/components/Pricing/Pricing";
 import { IconLogout } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 
-type SessionPayload = {
-  user: { id: string; name: string; email: string };
-  session: { userId: string };
+type SessionData = {
+  session?: { userId: string };
+  user?: { id: string; name: string; email: string };
 };
-
-type GetSessionOk = { data: SessionPayload | null };
-type GetSessionErr = { error: { code?: string; message?: string } };
-type GetSessionResult = GetSessionOk | GetSessionErr;
-
-function isError(res: GetSessionResult): res is GetSessionErr {
-  return "error" in res && !!res.error;
-}
-
-function hasData(res: GetSessionResult): res is GetSessionOk {
-  return "data" in res;
-}
 
 export default function SubscribePage() {
   const router = useRouter();
 
+  // redirect if already subscribed (best-effort: uses SDK if it’s available)
   useEffect(() => {
     (async () => {
       try {
-        const res = (await authClient.getSession()) as GetSessionResult;
+        const res = await authClient.getSession();
+        const data = (res as any)?.data as SessionData | undefined;
+        const err  = (res as any)?.error as { message?: string } | undefined;
 
-        if (isError(res) || !hasData(res) || !res.data) {
+        if (err || !data?.user) {
           toast.error("You must be logged in to select a plan");
           router.push("/login");
           return;
         }
 
-        const { user } = res.data;
-        const { data, error } = await authClient.subscription.status(undefined, {
-          query: { userId: user.id },
-        });
-
-        if (error) {
-          toast.error(error.message);
-        } else if (data?.hasActiveSubscription) {
-          toast.success("You already have an active subscription");
-          router.push("/dashboard");
+        const subClient = (authClient as any).subscription;
+        if (subClient?.status) {
+          const { data: subData, error: subError } = await subClient.status(undefined, {
+            query: { userId: data.user.id },
+          });
+          if (subError) {
+            toast.error(subError.message);
+          } else if (subData?.hasActiveSubscription) {
+            toast.success("You already have an active subscription");
+            router.push("/dashboard");
+          }
         }
+        // If no subscription client, skip the pre-check; server will guard later.
       } catch {
-        toast.error("Failed to check subscription status");
+        // Non-fatal; keep user on page to choose a plan
       }
     })();
   }, [router]);
 
   async function handleSelectTier(plan: string) {
     try {
-      const res = (await authClient.getSession()) as GetSessionResult;
+      // ensure logged in
+      const res = await authClient.getSession();
+      const data = (res as any)?.data as SessionData | undefined;
+      const err  = (res as any)?.error as { message?: string } | undefined;
 
-      if (isError(res) || !hasData(res) || !res.data) {
+      if (err || !data?.user?.id) {
         toast.error("You must be logged in to select a plan");
         router.push("/login");
         return;
       }
+      const userId = data.user.id;
 
-      const userId = res.data.user.id;
-
-      // create Clerk subscription
-      const { error: subError } = await authClient.subscription.create({
-        userId,
-        plan,
-      });
-      if (subError) {
-        toast.error(subError.message || "Failed to select plan");
-        return;
+      // Try SDK subscription.create if available; otherwise let our API do it.
+      const subClient = (authClient as any).subscription;
+      if (subClient?.create) {
+        const { error: subError } = await subClient.create({ userId, plan });
+        if (subError) {
+          toast.error(subError.message || "Failed to select plan");
+          return;
+        }
       }
 
-      // create tenant
+      // Create tenant (and/or complete subscription) on our backend
       const tenantRes = await fetch("/api/internal/tenant", {
         method: "POST",
         credentials: "include",
@@ -92,16 +87,15 @@ export default function SubscribePage() {
         return;
       }
 
-      const body = await tenantRes.json();
+      const body = await tenantRes.json().catch(() => ({}));
       if (!tenantRes.ok) {
-        toast.error(body.error || "Failed to create tenant");
+        toast.error(body?.error || "Failed to create tenant");
         return;
       }
 
       toast.success("Plan selected and tenant created!");
       router.push("/dashboard");
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("An unexpected error occurred");
     }
   }
