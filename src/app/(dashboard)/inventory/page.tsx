@@ -50,6 +50,7 @@ type InventoryCountRow = {
   startedOn: string;
   isCompleted: boolean; // ISO or human-readable
 };
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 // Create an inline Web Worker that holds the dataset and performs filtering + paging off-thread.
 // No external files or deps; works in Next.js client components.
