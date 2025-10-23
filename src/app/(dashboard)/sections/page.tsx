@@ -11,37 +11,37 @@ import { SectionsTable } from "./components/sections-table";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-/* -------------------------------------------------------------------------- */
-
 export default function SectionsPage() {
   const router = useRouter();
 
-  /* active-org id for permission queries */
+  // 1) Read active org FIRST and gate on it
   const { data: activeOrg } = authClient.useActiveOrganization();
+
+  // While the active org is not resolved yet, render nothing.
+  // (Prevents downstream hooks from being called with changing assumptions)
+  if (activeOrg === undefined) return null;
+
   const organizationId = activeOrg?.id ?? null;
 
-  /* permissions */
+  // 2) Now it’s safe to call permission hooks (order won’t change between renders)
   const {
     hasPermission: canView,
     isLoading: permLoading,
   } = useHasPermission(organizationId, { sections: ["view"] });
 
-  const { hasPermission: canCreate } = useHasPermission(
-    organizationId,
-    { sections: ["create"] },
-  );
+  const { hasPermission: canCreate } = useHasPermission(organizationId, {
+    sections: ["create"],
+  });
 
-  /* redirect if not allowed to view */
+  // redirect if not allowed to view
   useEffect(() => {
     if (!permLoading && !canView) {
       router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 
-  /* guards */
   if (permLoading || !canView) return null;
 
-  /* ---------------------------------------------------------------------- */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex justify-end mb-4">

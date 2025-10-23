@@ -35,7 +35,6 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-/* NEW: TanStack + standardized table */
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -59,21 +58,15 @@ const buildTree = (list: Section[]): Node[] => {
   list.forEach((s) => map.set(s.id, { ...s, children: [] }));
   list.forEach((s) => {
     const node = map.get(s.id)!;
-    if (s.parentSectionId) {
-      map.get(s.parentSectionId)?.children.push(node);
-    } else roots.push(node);
+    if (s.parentSectionId) map.get(s.parentSectionId)?.children.push(node);
+    else roots.push(node);
   });
   const sort = (arr: Node[]) =>
-    arr
-      .sort((a, b) => a.title.localeCompare(b.title))
-      .forEach((n) => sort(n.children));
+    arr.sort((a, b) => a.title.localeCompare(b.title)).forEach((n) => sort(n.children));
   sort(roots);
   return roots;
 };
-const flatten = (
-  nodes: Node[],
-  depth = 0
-): Array<Section & { depth: number }> => {
+const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> => {
   const out: Array<Section & { depth: number }> = [];
   nodes.forEach((n) => {
     out.push({ ...n, depth });
@@ -85,21 +78,27 @@ const flatten = (
 export function SectionsTable() {
   const router = useRouter();
 
-  // ── permissions via useHasPermission
+  // 1) Get active org and GATE early. Do not call permission hooks until this is stable.
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
-    orgId,
-    { sections: ["view"] }
-  );
-  const { hasPermission: canCreate, isLoading: createLoading } =
-    useHasPermission(orgId, { sections: ["create"] });
-  const { hasPermission: canUpdate, isLoading: updateLoading } =
-    useHasPermission(orgId, { sections: ["update"] });
-  const { hasPermission: canDelete, isLoading: deleteLoading } =
-    useHasPermission(orgId, { sections: ["delete"] });
+  if (activeOrg === undefined) return null; // prevents hook order mismatches
 
-  // ── state hooks (always called)
+  const orgId = activeOrg?.id ?? null;
+
+  // 2) Permission hooks (now safe)
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, {
+    sections: ["view"],
+  });
+  const { hasPermission: canCreate, isLoading: createLoading } = useHasPermission(orgId, {
+    sections: ["create"],
+  });
+  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, {
+    sections: ["update"],
+  });
+  const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, {
+    sections: ["delete"],
+  });
+
+  // state hooks
   const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState<Section | null>(null);
@@ -107,7 +106,7 @@ export function SectionsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
 
-  // ── data fetching (always callable)
+  // data fetching
   const fetchSections = async () => {
     setLoading(true);
     try {
@@ -121,28 +120,20 @@ export function SectionsTable() {
     }
   };
 
-  // ── fetch when view permission granted
+  // fetch when view permission granted
   useEffect(() => {
-    if (canView) {
-      fetchSections();
-    }
+    if (canView) fetchSections();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canView]);
 
-  // ── redirect if no view permission
+  // redirect if no view permission
   useEffect(() => {
-    if (!viewLoading && !canView) {
-      router.replace("/dashboard");
-    }
+    if (!viewLoading && !canView) router.replace("/dashboard");
   }, [viewLoading, canView, router]);
 
-  // ── guards before rendering
-  if (viewLoading || createLoading || updateLoading || deleteLoading) {
-    return null;
-  }
-  if (!canView) {
-    return null;
-  }
+  // guards
+  if (viewLoading || createLoading || updateLoading || deleteLoading) return null;
+  if (!canView) return null;
 
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
@@ -150,9 +141,7 @@ export function SectionsTable() {
   const confirmDelete = async () => {
     if (!toDelete) return;
     try {
-      const res = await fetch(`/api/sections/${toDelete.id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`/api/sections/${toDelete.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
       toast.success("Section deleted");
       await fetchSections();
@@ -163,89 +152,78 @@ export function SectionsTable() {
     }
   };
 
-  /* ── columns for StandardDataTable ─────────────────────────────── */
-  const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => {
-    return [
-      {
-        accessorKey: "title",
-        header: "Title",
-        cell: ({ row }) => (
-          <div style={{ paddingLeft: `${row.original.depth * 1.5}rem` }}>
-            {row.original.title}
-          </div>
-        ),
-      },
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => row.original.name,
-      },
-      {
-        accessorKey: "updatedAt",
-        header: "Updated",
-        cell: ({ row }) =>
-          new Date(row.original.updatedAt).toLocaleString(undefined, {
-            dateStyle: "short",
-            timeStyle: "short",
-          }),
-      },
-      {
-        id: "actions",
-        header: () => <div className="text-right">Actions</div>,
-        cell: ({ row }) => {
-          const s = row.original;
-          return (
-            <div className="text-right">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canUpdate && (
+  const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => [
+    {
+      accessorKey: "title",
+      header: "Title",
+      cell: ({ row }) => (
+        <div style={{ paddingLeft: `${row.original.depth * 1.5}rem` }}>
+          {row.original.title}
+        </div>
+      ),
+    },
+    { accessorKey: "name", header: "Name", cell: ({ row }) => row.original.name },
+    {
+      accessorKey: "updatedAt",
+      header: "Updated",
+      cell: ({ row }) =>
+        new Date(row.original.updatedAt).toLocaleString(undefined, {
+          dateStyle: "short",
+          timeStyle: "short",
+        }),
+    },
+    {
+      id: "actions",
+      header: () => <div className="text-right">Actions</div>,
+      cell: ({ row }) => {
+        const s = row.original;
+        return (
+          <div className="text-right">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canUpdate && (
+                  <DropdownMenuItem onClick={() => router.push(`/sections/${s.id}`)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      onClick={() => router.push(`/sections/${s.id}`)}
+                      onClick={() => setToDelete(s)}
+                      className="text-destructive"
                     >
-                      <Edit className="mr-2 h-4 w-4" />
-                      Edit
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
                     </DropdownMenuItem>
-                  )}
-                  {canDelete && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setToDelete(s)}
-                        className="text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          );
-        },
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
       },
-    ];
-  }, [canUpdate, canDelete, router]);
+    },
+  ], [canUpdate, canDelete, router]);
 
   const table = useReactTable({
-    data: paged, // feed only the current page
+    data: paged,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
     <div className="space-y-4">
-      {/* header */}
       <div className="flex justify-between">
         <h1 className="text-2xl font-semibold">Sections</h1>
       </div>
 
-      {/* Standardized table */}
       <StandardDataTable<Section & { depth: number }>
         table={table}
         columns={columns}
@@ -253,7 +231,8 @@ export function SectionsTable() {
         emptyMessage="No sections yet."
       />
 
-      {/* pagination */}
+      {/* pagination & delete dialog unchanged */}
+      {/* ... */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Page {pageIndex + 1} of {pageCount}
@@ -267,50 +246,26 @@ export function SectionsTable() {
             }}
             className="border rounded px-2 py-1 text-sm"
           >
-            {pageSizeOptions.map((n) => (
+            {[10, 20, 50].map((n) => (
               <option key={n}>{n}</option>
             ))}
           </select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex(0)}
-            disabled={pageIndex === 0}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex(0)} disabled={pageIndex === 0}>
             <ChevronsLeft className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex((p) => p - 1)}
-            disabled={pageIndex === 0}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex((p) => p - 1)} disabled={pageIndex === 0}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex((p) => p + 1)}
-            disabled={pageIndex + 1 >= pageCount}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex((p) => p + 1)} disabled={pageIndex + 1 >= pageCount}>
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex(pageCount - 1)}
-            disabled={pageIndex + 1 >= pageCount}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex(pageCount - 1)} disabled={pageIndex + 1 >= pageCount}>
             <ChevronsRight className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* delete dialog */}
-      <AlertDialog
-        open={!!toDelete}
-        onOpenChange={(o) => !o && setToDelete(null)}
-      >
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete section?</AlertDialogTitle>
@@ -320,9 +275,7 @@ export function SectionsTable() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
