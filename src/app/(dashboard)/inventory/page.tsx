@@ -50,6 +50,7 @@ type InventoryCountRow = {
   startedOn: string;
   isCompleted: boolean; // ISO or human-readable
 };
+import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
 
 // Create an inline Web Worker that holds the dataset and performs filtering + paging off-thread.
