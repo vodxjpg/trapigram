@@ -123,7 +123,9 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
   const router = useRouter();
   const [countries, setCountries] = useState<string[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({});
+  const [stockData, setStockData] = useState<
+    Record<string, Record<string, number | undefined>>
+  >({});
   const [costs, setCosts] = useState<CostMap>({});
   const [minLevel, setMinLevel] = useState<string | null>(initialData?.minLevelId ?? null);
   const [levels, setLevels] = useState<{ id: string; name: string }[]>([]);
@@ -157,7 +159,9 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
   /* build blank stockData */
   useEffect(() => {
     if (!warehouses.length || !countries.length) return;
-    const obj: Record<string, Record<string, number>> = {};
+
+    // default to 0 (a number is fine in number|undefined)
+    const obj: Record<string, Record<string, number | undefined>> = {};
     warehouses.forEach((w) => {
       obj[w.id] = {};
       w.countries.forEach((c) => (obj[w.id][c] = 0));
@@ -244,9 +248,11 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       country: string;
       quantity: number;
     }[] = [];
-    for (const [wId, byCountry] of Object.entries(stockData))
-      for (const [c, qty] of Object.entries(byCountry))
-        if (qty > 0)
+
+    for (const [wId, byCountry] of Object.entries(stockData)) {
+      for (const [c, qtyMaybe] of Object.entries(byCountry)) {
+        const qty = Number(qtyMaybe ?? 0);
+        if (Number.isFinite(qty) && qty > 0) {
           arr.push({
             warehouseId: wId,
             affiliateProductId: productId || "TEMP",
@@ -254,6 +260,9 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
             country: c,
             quantity: qty,
           });
+        }
+      }
+    }
     return arr;
   };
 
@@ -270,10 +279,12 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         pointsPrice: productType === "simple" ? values.pointsPrice : undefined,
         variations: productType === "variable" ? variations : undefined,
       };
+
       const url = productId
         ? `/api/affiliate/products/${productId}`
         : "/api/affiliate/products";
       const method = productId ? "PATCH" : "POST";
+
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -288,7 +299,13 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         return;
       }
 
-      swrMutate((k) => k.startsWith("/api/affiliate/products"));
+      // ✅ SWR predicate guarded + explicit revalidate
+      swrMutate(
+        (key) => typeof key === "string" && key.startsWith("/api/affiliate/products"),
+        undefined,
+        { revalidate: true }
+      );
+
       toast.success(productId ? "Product updated" : "Product created");
       router.push("/affiliates/products");
       router.refresh();
@@ -296,6 +313,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       setSubmitting(false);
     }
   };
+
 
   /* UI */
   return (
@@ -502,7 +520,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                   <StockManagement
                     warehouses={warehouses}
                     stockData={stockData}
-                    onStockChange={setStockData}
+                    onStockChange={(data) => setStockData(data)}
                   />
                 )}
               </CardContent>

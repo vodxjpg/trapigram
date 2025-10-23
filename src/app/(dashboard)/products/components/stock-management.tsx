@@ -1,3 +1,4 @@
+// src/app/(dashboard)/products/components/stock-management.tsx
 "use client";
 
 import { useState } from "react";
