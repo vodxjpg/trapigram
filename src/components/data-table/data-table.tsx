@@ -1,6 +1,4 @@
 // src/components/data-table/data-table.tsx
-// NOTE: previously commented as "standard-data-table.tsx"; keeping path consistent with your import.
-// src/components/data-table/data-table.tsx
 "use client";
 
 import {

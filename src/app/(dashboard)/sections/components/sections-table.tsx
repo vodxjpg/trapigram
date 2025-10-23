@@ -50,22 +50,28 @@ type Section = {
   videoUrl: string | null;
   updatedAt: string;
 };
-
 type Node = Section & { children: Node[] };
+
 const buildTree = (list: Section[]): Node[] => {
   const map = new Map<string, Node>();
   const roots: Node[] = [];
   list.forEach((s) => map.set(s.id, { ...s, children: [] }));
   list.forEach((s) => {
     const node = map.get(s.id)!;
-    if (s.parentSectionId) map.get(s.parentSectionId)?.children.push(node);
-    else roots.push(node);
+    if (s.parentSectionId) {
+      map.get(s.parentSectionId)?.children.push(node);
+    } else {
+      roots.push(node);
+    }
   });
   const sort = (arr: Node[]) =>
-    arr.sort((a, b) => a.title.localeCompare(b.title)).forEach((n) => sort(n.children));
+    arr
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .forEach((n) => sort(n.children));
   sort(roots);
   return roots;
 };
+
 const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> => {
   const out: Array<Section & { depth: number }> = [];
   nodes.forEach((n) => {
@@ -78,27 +84,16 @@ const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> =
 export function SectionsTable() {
   const router = useRouter();
 
-  // 1) Get active org and GATE early. Do not call permission hooks until this is stable.
+  // permissions (hooks must be called unconditionally)
   const { data: activeOrg } = authClient.useActiveOrganization();
-  if (activeOrg === undefined) return null; // prevents hook order mismatches
-
   const orgId = activeOrg?.id ?? null;
 
-  // 2) Permission hooks (now safe)
-  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, {
-    sections: ["view"],
-  });
-  const { hasPermission: canCreate, isLoading: createLoading } = useHasPermission(orgId, {
-    sections: ["create"],
-  });
-  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, {
-    sections: ["update"],
-  });
-  const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, {
-    sections: ["delete"],
-  });
+  const { hasPermission: canView,   isLoading: viewLoading }   = useHasPermission(orgId, { sections: ["view"] });
+  const { hasPermission: canCreate, isLoading: createLoading } = useHasPermission(orgId, { sections: ["create"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { sections: ["update"] });
+  const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, { sections: ["delete"] });
 
-  // state hooks
+  // state (also unconditional)
   const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState<Section | null>(null);
@@ -106,51 +101,36 @@ export function SectionsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
 
-  // data fetching
-  const fetchSections = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/sections?depth=10");
-      if (!res.ok) throw new Error("Failed");
-      const { sections } = await res.json();
-      const tree = buildTree(sections);
-      setRows(flatten(tree));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // fetch when view permission granted
+  // fetch when allowed
   useEffect(() => {
-    if (canView) fetchSections();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!canView) return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/sections?depth=10");
+        if (!res.ok) throw new Error("Failed");
+        const { sections } = await res.json();
+        const tree = buildTree(sections);
+        setRows(flatten(tree));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [canView]);
 
   // redirect if no view permission
   useEffect(() => {
-    if (!viewLoading && !canView) router.replace("/dashboard");
+    if (!viewLoading && !canView) {
+      router.replace("/dashboard");
+    }
   }, [viewLoading, canView, router]);
 
-  // guards
-  if (viewLoading || createLoading || updateLoading || deleteLoading) return null;
-  if (!canView) return null;
-
+  // derive pagination + columns (ALWAYS call hooks)
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
-
-  const confirmDelete = async () => {
-    if (!toDelete) return;
-    try {
-      const res = await fetch(`/api/sections/${toDelete.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error();
-      toast.success("Section deleted");
-      await fetchSections();
-    } catch {
-      toast.error("Delete failed");
-    } finally {
-      setToDelete(null);
-    }
-  };
+  const paged = useMemo(
+    () => rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize),
+    [rows, pageIndex, pageSize],
+  );
 
   const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => [
     {
@@ -162,7 +142,11 @@ export function SectionsTable() {
         </div>
       ),
     },
-    { accessorKey: "name", header: "Name", cell: ({ row }) => row.original.name },
+    {
+      accessorKey: "name",
+      header: "Name",
+      cell: ({ row }) => row.original.name,
+    },
     {
       accessorKey: "updatedAt",
       header: "Updated",
@@ -212,14 +196,39 @@ export function SectionsTable() {
     },
   ], [canUpdate, canDelete, router]);
 
+  // Create the table instance on every render (safe), but pass empty data until allowed
   const table = useReactTable({
-    data: paged,
+    data: canView ? paged : [],
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
+  // after all hooks are called, it's safe to short-circuit UI
+  if (viewLoading || createLoading || updateLoading || deleteLoading) return null;
+  if (!canView) return null;
+
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    try {
+      const res = await fetch(`/api/sections/${toDelete.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast.success("Section deleted");
+      // re-fetch
+      setPageIndex(0);
+      const resp = await fetch("/api/sections?depth=10");
+      const { sections } = await resp.json();
+      const tree = buildTree(sections);
+      setRows(flatten(tree));
+    } catch {
+      toast.error("Delete failed");
+    } finally {
+      setToDelete(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {/* header */}
       <div className="flex justify-between">
         <h1 className="text-2xl font-semibold">Sections</h1>
       </div>
@@ -231,8 +240,7 @@ export function SectionsTable() {
         emptyMessage="No sections yet."
       />
 
-      {/* pagination & delete dialog unchanged */}
-      {/* ... */}
+      {/* pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Page {pageIndex + 1} of {pageCount}
@@ -247,7 +255,7 @@ export function SectionsTable() {
             className="border rounded px-2 py-1 text-sm"
           >
             {[10, 20, 50].map((n) => (
-              <option key={n}>{n}</option>
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
           <Button variant="outline" size="icon" onClick={() => setPageIndex(0)} disabled={pageIndex === 0}>
@@ -265,6 +273,7 @@ export function SectionsTable() {
         </div>
       </div>
 
+      {/* delete dialog */}
       <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
