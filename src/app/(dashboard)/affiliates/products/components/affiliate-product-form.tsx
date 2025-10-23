@@ -1,15 +1,13 @@
 /* ────────────────────────────────────────────────────────────────
    src/app/(dashboard)/affiliates/products/components/affiliate-product-form.tsx
-   (FULL FILE)
 ───────────────────────────────────────────────────────────────── */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { v4 as uuidv4 } from "uuid";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { Loader2 } from "lucide-react";
@@ -27,12 +25,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 
@@ -43,7 +36,7 @@ import { AffiliateProductVariations } from "./affiliate-product-variations";
 import { LevelPointsManagement } from "./level-points-management";
 import { LevelRequirementSelect } from "./level-requirement-select";
 
-/* Rich-text editor */
+/* Quill */
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 const quillModules = {
@@ -70,9 +63,8 @@ const quillFormats = [
 
 /* Types & Zod */
 type CountryPts = { regular: number; sale: number | null };
-import { PointsByLvl } from "@/hooks/affiliatePoints";
+type PointsByLvl = Record<string, Record<string, CountryPts>>;
 export type CostMap = Record<string, number>;
-type PointsMap = Record<string, CountryPts>;
 type VariationExt = Variation & { prices: PointsByLvl; cost: CostMap };
 
 const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
@@ -86,7 +78,7 @@ const productSchema = z.object({
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
   pointsPrice: z.record(z.string(), z.record(z.string(), ptsObj)),
-  cost: z.record(z.string(), z.number().min(0)).optional(), // simple products only
+  cost: z.record(z.string(), z.number().min(0)).optional(),
   minLevelId: z.string().uuid().nullable().optional(),
 });
 type FormVals = z.infer<typeof productSchema>;
@@ -121,11 +113,10 @@ interface Props {
 
 export function AffiliateProductForm({ productId, initialData }: Props) {
   const router = useRouter();
+
   const [countries, setCountries] = useState<string[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [stockData, setStockData] = useState<
-    Record<string, Record<string, number | undefined>>
-  >({});
+  const [stockData, setStockData] = useState<Record<string, Record<string, number | undefined>>>({});
   const [costs, setCosts] = useState<CostMap>({});
   const [minLevel, setMinLevel] = useState<string | null>(initialData?.minLevelId ?? null);
   const [levels, setLevels] = useState<{ id: string; name: string }[]>([]);
@@ -135,20 +126,13 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
   /* fetch countries + warehouses once */
   useEffect(() => {
     (async () => {
-      /* countries */
       const cRes = await fetch("/api/organizations/countries");
       const { countries: raw } = await cRes.json();
       const cc: string[] = Array.isArray(raw) ? raw : JSON.parse(raw);
       setCountries(cc);
 
-      /* cost map init */
-      if (initialData?.cost) {
-        setCosts(initialData.cost as CostMap);
-      } else {
-        setCosts(blankCostFor(cc));
-      }
+      setCosts(initialData?.cost ? (initialData.cost as CostMap) : blankCostFor(cc));
 
-      /* warehouses */
       const wRes = await fetch("/api/warehouses");
       const { warehouses: wh } = await wRes.json();
       setWarehouses(wh);
@@ -160,7 +144,6 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
   useEffect(() => {
     if (!warehouses.length || !countries.length) return;
 
-    // default to 0 (a number is fine in number|undefined)
     const obj: Record<string, Record<string, number | undefined>> = {};
     warehouses.forEach((w) => {
       obj[w.id] = {};
@@ -181,36 +164,42 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     defaultValues: initialData
       ? (initialData as any)
       : {
-        title: "",
-        description: "",
-        image: null,
-        sku: "",
-        status: "draft",
-        productType: "simple",
-        allowBackorders: false,
-        manageStock: false,
-        pointsPrice: blankPtsFor(countries, levels),
-        cost: blankCostFor(countries),
-        minLevelId: null,
-      },
+          title: "",
+          description: "",
+          image: null,
+          sku: "",
+          status: "draft",
+          productType: "simple",
+          allowBackorders: false,
+          manageStock: false,
+          pointsPrice: blankPtsFor(countries, levels),
+          cost: blankCostFor(countries),
+          minLevelId: null,
+        },
   });
 
-  /* ensure blank points map for new product after countries load */
+  /* never pass undefined to children */
+  const emptyPoints: PointsByLvl = useMemo(() => ({ default: {} }), []);
+  const watchedPoints = (form.watch("pointsPrice") as PointsByLvl | undefined) ?? emptyPoints;
+
+  /* ensure pointsPrice exists (avoid Object.keys on undefined) */
   useEffect(() => {
     if (!countries.length || !levels.length) return;
-    const curr = form.getValues("pointsPrice");
-    if (!Object.keys(curr).length) {
-      form.setValue("pointsPrice", blankPtsFor(countries, levels));
+    const curr = form.getValues("pointsPrice") as unknown;
+    const hasKeys =
+      !!curr && typeof curr === "object" && !Array.isArray(curr) && Object.keys(curr as object).length > 0;
+
+    if (!hasKeys) {
+      form.setValue("pointsPrice", blankPtsFor(countries, levels), { shouldDirty: false });
     }
-  }, [countries, levels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [countries, levels, form]);
 
   const productType = form.watch("productType");
   const manageStock = form.watch("manageStock");
-  const ptsPrice = form.watch("pointsPrice");
 
   /* load affiliate levels once */
   useEffect(() => {
-    (async function loadLevels() {
+    (async () => {
       try {
         const res = await fetch("/api/affiliate/levels");
         if (!res.ok) throw new Error("Failed to fetch levels");
@@ -231,10 +220,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
-    const { filePath } = await fetch("/api/upload", {
-      method: "POST",
-      body: fd,
-    }).then((r) => r.json());
+    const { filePath } = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
     setImgPreview(filePath);
     form.setValue("image", filePath);
   };
@@ -248,18 +234,11 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       country: string;
       quantity: number;
     }[] = [];
-
     for (const [wId, byCountry] of Object.entries(stockData)) {
       for (const [c, qtyMaybe] of Object.entries(byCountry)) {
         const qty = Number(qtyMaybe ?? 0);
         if (Number.isFinite(qty) && qty > 0) {
-          arr.push({
-            warehouseId: wId,
-            affiliateProductId: productId || "TEMP",
-            variationId: null,
-            country: c,
-            quantity: qty,
-          });
+          arr.push({ warehouseId: wId, affiliateProductId: productId || "TEMP", variationId: null, country: c, quantity: qty });
         }
       }
     }
@@ -280,32 +259,18 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         variations: productType === "variable" ? variations : undefined,
       };
 
-      const url = productId
-        ? `/api/affiliate/products/${productId}`
-        : "/api/affiliate/products";
+      const url = productId ? `/api/affiliate/products/${productId}` : "/api/affiliate/products";
       const method = productId ? "PATCH" : "POST";
 
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg = Array.isArray(data?.error)
-          ? data.error.map((e: any) => e.message).join(" • ")
-          : data.error || "Failed to save";
+        const msg = Array.isArray(data?.error) ? data.error.map((e: any) => e.message).join(" • ") : data.error || "Failed to save";
         toast.error(msg);
         return;
       }
 
-      // ✅ SWR predicate guarded + explicit revalidate
-      swrMutate(
-        (key) => typeof key === "string" && key.startsWith("/api/affiliate/products"),
-        undefined,
-        { revalidate: true }
-      );
-
+      swrMutate((key) => typeof key === "string" && key.startsWith("/api/affiliate/products"), undefined, { revalidate: true });
       toast.success(productId ? "Product updated" : "Product created");
       router.push("/affiliates/products");
       router.refresh();
@@ -314,68 +279,41 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     }
   };
 
-
   /* UI */
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
-          <TabsList
-            className={`grid w-full ${form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"
-              }`}
-          >
+          <TabsList className={`grid w-full ${form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"}`}>
             <TabsTrigger value="general">General</TabsTrigger>
-            {form.watch("productType") === "simple" && (
-              <TabsTrigger value="points">Points</TabsTrigger>
-            )}
+            {form.watch("productType") === "simple" && <TabsTrigger value="points">Points</TabsTrigger>}
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="attributes">Attributes</TabsTrigger>
-            <TabsTrigger
-              value="variations"
-              disabled={form.watch("productType") !== "variable"}
-            >
+            <TabsTrigger value="variations" disabled={form.watch("productType") !== "variable"}>
               Variations
             </TabsTrigger>
           </TabsList>
 
-          {/* ── GENERAL ───────────────────────────────────────── */}
+          {/* GENERAL */}
           <TabsContent value="general" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Basic Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* image + main fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* image column */}
                   <div className="space-y-4">
                     <FormLabel>Featured Image</FormLabel>
                     {imgPreview ? (
-                      <Image
-                        src={imgPreview}
-                        alt="preview"
-                        width={400}
-                        height={400}
-                        className="rounded-md object-cover w-full h-64"
-                      />
+                      <Image src={imgPreview} alt="preview" width={400} height={400} className="rounded-md object-cover w-full h-64" />
                     ) : (
                       <div className="border border-dashed h-64 flex items-center justify-center rounded-md">
                         <span className="text-sm text-muted-foreground">No image</span>
                       </div>
                     )}
-                    <Input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      id="aff-img-input"
-                      onChange={handleUpload}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => document.getElementById("aff-img-input")?.click()}
-                      className="w-full"
-                    >
+                    <Input type="file" accept="image/*" className="hidden" id="aff-img-input" onChange={handleUpload} />
+                    <Button type="button" variant="outline" onClick={() => document.getElementById("aff-img-input")?.click()} className="w-full">
                       {imgPreview ? "Change Image" : "Upload Image"}
                     </Button>
                   </div>
@@ -401,11 +339,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Product Type</FormLabel>
-                          <select
-                            className="w-full border rounded-md px-3 py-2"
-                            value={field.value}
-                            onChange={field.onChange}
-                          >
+                          <select className="w-full border rounded-md px-3 py-2" value={field.value} onChange={field.onChange}>
                             <option value="simple">Simple</option>
                             <option value="variable">Variable</option>
                           </select>
@@ -429,9 +363,8 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     />
                   </div>
                 </div>
-                {productType === "simple" && (
-                  <LevelRequirementSelect value={minLevel} onChange={setMinLevel} />
-                )}
+
+                {productType === "simple" && <LevelRequirementSelect value={minLevel} onChange={setMinLevel} />}
 
                 <FormField
                   control={form.control}
@@ -440,14 +373,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     <FormItem className="col-span-full">
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <ReactQuill
-                          theme="snow"
-                          modules={quillModules}
-                          formats={quillFormats}
-                          value={field.value || ""}
-                          onChange={field.onChange}
-                          className="min-h-[200px]"
-                        />
+                        <ReactQuill theme="snow" modules={quillModules} formats={quillFormats} value={field.value || ""} onChange={field.onChange} className="min-h-[200px]" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -457,14 +383,14 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
             </Card>
           </TabsContent>
 
-          {/* POINTS & COST (simple products only) */}
+          {/* POINTS & COST (simple) */}
           {productType === "simple" && (
             <TabsContent value="points" className="space-y-6">
               <LevelPointsManagement
                 title="Points per country / level"
                 countries={countries}
                 levels={levels}
-                value={ptsPrice}
+                value={watchedPoints}
                 onChange={(m) => form.setValue("pointsPrice", m)}
                 costData={costs}
                 onCostChange={setCosts}
@@ -472,7 +398,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
             </TabsContent>
           )}
 
-          {/* ── INVENTORY ─────────────────────────────────────── */}
+          {/* INVENTORY */}
           <TabsContent value="inventory" className="space-y-6">
             <Card>
               <CardHeader>
@@ -486,15 +412,10 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     <FormItem className="flex items-center justify-between p-4 border rounded-lg">
                       <div>
                         <FormLabel>Manage Stock</FormLabel>
-                        <FormDescription>
-                          Track inventory at warehouse/country level
-                        </FormDescription>
+                        <FormDescription>Track inventory at warehouse/country level</FormDescription>
                       </div>
                       <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -508,35 +429,22 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                         <FormLabel>Allow Backorders</FormLabel>
                       </div>
                       <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
                       </FormControl>
                     </FormItem>
                   )}
                 />
-                {manageStock && (
-                  <StockManagement
-                    warehouses={warehouses}
-                    stockData={stockData}
-                    onStockChange={(data) => setStockData(data)}
-                  />
-                )}
+                {manageStock && <StockManagement warehouses={warehouses} stockData={stockData} onStockChange={(data) => setStockData(data)} />}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* ── ATTRIBUTES ────────────────────────────────────── */}
+          {/* ATTRIBUTES */}
           <TabsContent value="attributes" className="space-y-6">
-            <ProductAttributes
-              attributes={attributes}
-              onAttributesChange={setAttributes}
-              productType={productType}
-            />
+            <ProductAttributes attributes={attributes} onAttributesChange={setAttributes} productType={productType} />
           </TabsContent>
 
-          {/* ── VARIATIONS ────────────────────────────────────── */}
+          {/* VARIATIONS */}
           <TabsContent value="variations" className="space-y-6">
             <AffiliateProductVariations
               attributes={attributes.filter((a: any) => a.useForVariations)}
@@ -549,13 +457,8 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
           </TabsContent>
         </Tabs>
 
-        {/* footer buttons */}
         <div className="flex justify-end gap-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.push("/affiliates/products")}
-          >
+          <Button type="button" variant="outline" onClick={() => router.push("/affiliates/products")}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
