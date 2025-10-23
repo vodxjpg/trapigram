@@ -9,15 +9,19 @@ const WP_HOST = NORMALIZED_WP_URL ? new URL(NORMALIZED_WP_URL).hostname : null;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Put experimental flags you actually need here
   experimental: {
-    // Ensure your CA bundle is traced into the serverless output for routes that need it
+    // your tracing include (kept)
     outputFileTracingIncludes: {
       "/(dashboard)/niftipay/webhook/route": ["./certs/prod-ca-2021.crt"],
       "/(dashboard)/**": ["./certs/prod-ca-2021.crt"],
       "/api/**": ["./certs/prod-ca-2021.crt"],
-      // add other segments if needed, e.g. "/(auth)/**": ["./certs/prod-ca-2021.crt"],
+      // "/(auth)/**": ["./certs/prod-ca-2021.crt"], // add more segments if needed
     },
+
+    // requested experimental flags:
+    browserDebugInfoInTerminal: true,
+    devtoolSegmentExplorer: true,
+    globalNotFound: true,
   },
 
   images: {
@@ -47,13 +51,9 @@ const nextConfig = {
     ];
   },
 
-  // These two are what make the build not fail on lint/type errors:
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
+  // allow deploys to proceed despite lint/TS errors while you fix files
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
 };
 
 export default nextConfig;
