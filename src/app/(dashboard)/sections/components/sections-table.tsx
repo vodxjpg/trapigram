@@ -35,7 +35,6 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-/* NEW: TanStack + standardized table */
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -51,8 +50,8 @@ type Section = {
   videoUrl: string | null;
   updatedAt: string;
 };
-
 type Node = Section & { children: Node[] };
+
 const buildTree = (list: Section[]): Node[] => {
   const map = new Map<string, Node>();
   const roots: Node[] = [];
@@ -61,7 +60,9 @@ const buildTree = (list: Section[]): Node[] => {
     const node = map.get(s.id)!;
     if (s.parentSectionId) {
       map.get(s.parentSectionId)?.children.push(node);
-    } else roots.push(node);
+    } else {
+      roots.push(node);
+    }
   });
   const sort = (arr: Node[]) =>
     arr
@@ -70,10 +71,8 @@ const buildTree = (list: Section[]): Node[] => {
   sort(roots);
   return roots;
 };
-const flatten = (
-  nodes: Node[],
-  depth = 0
-): Array<Section & { depth: number }> => {
+
+const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> => {
   const out: Array<Section & { depth: number }> = [];
   nodes.forEach((n) => {
     out.push({ ...n, depth });
@@ -85,21 +84,16 @@ const flatten = (
 export function SectionsTable() {
   const router = useRouter();
 
-  // ── permissions via useHasPermission
+  // permissions (hooks must be called unconditionally)
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
-    orgId,
-    { sections: ["view"] }
-  );
-  const { hasPermission: canCreate, isLoading: createLoading } =
-    useHasPermission(orgId, { sections: ["create"] });
-  const { hasPermission: canUpdate, isLoading: updateLoading } =
-    useHasPermission(orgId, { sections: ["update"] });
-  const { hasPermission: canDelete, isLoading: deleteLoading } =
-    useHasPermission(orgId, { sections: ["delete"] });
 
-  // ── state hooks (always called)
+  const { hasPermission: canView,   isLoading: viewLoading }   = useHasPermission(orgId, { sections: ["view"] });
+  const { hasPermission: canCreate, isLoading: createLoading } = useHasPermission(orgId, { sections: ["create"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { sections: ["update"] });
+  const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, { sections: ["delete"] });
+
+  // state (also unconditional)
   const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState<Section | null>(null);
@@ -107,136 +101,130 @@ export function SectionsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
 
-  // ── data fetching (always callable)
-  const fetchSections = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/sections?depth=10");
-      if (!res.ok) throw new Error("Failed");
-      const { sections } = await res.json();
-      const tree = buildTree(sections);
-      setRows(flatten(tree));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── fetch when view permission granted
+  // fetch when allowed
   useEffect(() => {
-    if (canView) {
-      fetchSections();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!canView) return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/sections?depth=10");
+        if (!res.ok) throw new Error("Failed");
+        const { sections } = await res.json();
+        const tree = buildTree(sections);
+        setRows(flatten(tree));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [canView]);
 
-  // ── redirect if no view permission
+  // redirect if no view permission
   useEffect(() => {
     if (!viewLoading && !canView) {
       router.replace("/dashboard");
     }
   }, [viewLoading, canView, router]);
 
-  // ── guards before rendering
-  if (viewLoading || createLoading || updateLoading || deleteLoading) {
-    return null;
-  }
-  if (!canView) {
-    return null;
-  }
-
+  // derive pagination + columns (ALWAYS call hooks)
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  const paged = useMemo(
+    () => rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize),
+    [rows, pageIndex, pageSize],
+  );
+
+  const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => [
+    {
+      accessorKey: "title",
+      header: "Title",
+      cell: ({ row }) => (
+        <div style={{ paddingLeft: `${row.original.depth * 1.5}rem` }}>
+          {row.original.title}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "name",
+      header: "Name",
+      cell: ({ row }) => row.original.name,
+    },
+    {
+      accessorKey: "updatedAt",
+      header: "Updated",
+      cell: ({ row }) =>
+        new Date(row.original.updatedAt).toLocaleString(undefined, {
+          dateStyle: "short",
+          timeStyle: "short",
+        }),
+    },
+    {
+      id: "actions",
+      header: () => <div className="text-right">Actions</div>,
+      cell: ({ row }) => {
+        const s = row.original;
+        return (
+          <div className="text-right">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canUpdate && (
+                  <DropdownMenuItem onClick={() => router.push(`/sections/${s.id}`)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setToDelete(s)}
+                      className="text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
+    },
+  ], [canUpdate, canDelete, router]);
+
+  // Create the table instance on every render (safe), but pass empty data until allowed
+  const table = useReactTable({
+    data: canView ? paged : [],
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  // after all hooks are called, it's safe to short-circuit UI
+  if (viewLoading || createLoading || updateLoading || deleteLoading) return null;
+  if (!canView) return null;
 
   const confirmDelete = async () => {
     if (!toDelete) return;
     try {
-      const res = await fetch(`/api/sections/${toDelete.id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`/api/sections/${toDelete.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
       toast.success("Section deleted");
-      await fetchSections();
+      // re-fetch
+      setPageIndex(0);
+      const resp = await fetch("/api/sections?depth=10");
+      const { sections } = await resp.json();
+      const tree = buildTree(sections);
+      setRows(flatten(tree));
     } catch {
       toast.error("Delete failed");
     } finally {
       setToDelete(null);
     }
   };
-
-  /* ── columns for StandardDataTable ─────────────────────────────── */
-  const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => {
-    return [
-      {
-        accessorKey: "title",
-        header: "Title",
-        cell: ({ row }) => (
-          <div style={{ paddingLeft: `${row.original.depth * 1.5}rem` }}>
-            {row.original.title}
-          </div>
-        ),
-      },
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => row.original.name,
-      },
-      {
-        accessorKey: "updatedAt",
-        header: "Updated",
-        cell: ({ row }) =>
-          new Date(row.original.updatedAt).toLocaleString(undefined, {
-            dateStyle: "short",
-            timeStyle: "short",
-          }),
-      },
-      {
-        id: "actions",
-        header: () => <div className="text-right">Actions</div>,
-        cell: ({ row }) => {
-          const s = row.original;
-          return (
-            <div className="text-right">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canUpdate && (
-                    <DropdownMenuItem
-                      onClick={() => router.push(`/sections/${s.id}`)}
-                    >
-                      <Edit className="mr-2 h-4 w-4" />
-                      Edit
-                    </DropdownMenuItem>
-                  )}
-                  {canDelete && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setToDelete(s)}
-                        className="text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          );
-        },
-      },
-    ];
-  }, [canUpdate, canDelete, router]);
-
-  const table = useReactTable({
-    data: paged, // feed only the current page
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   return (
     <div className="space-y-4">
@@ -245,7 +233,6 @@ export function SectionsTable() {
         <h1 className="text-2xl font-semibold">Sections</h1>
       </div>
 
-      {/* Standardized table */}
       <StandardDataTable<Section & { depth: number }>
         table={table}
         columns={columns}
@@ -267,50 +254,27 @@ export function SectionsTable() {
             }}
             className="border rounded px-2 py-1 text-sm"
           >
-            {pageSizeOptions.map((n) => (
-              <option key={n}>{n}</option>
+            {[10, 20, 50].map((n) => (
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex(0)}
-            disabled={pageIndex === 0}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex(0)} disabled={pageIndex === 0}>
             <ChevronsLeft className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex((p) => p - 1)}
-            disabled={pageIndex === 0}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex((p) => p - 1)} disabled={pageIndex === 0}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex((p) => p + 1)}
-            disabled={pageIndex + 1 >= pageCount}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex((p) => p + 1)} disabled={pageIndex + 1 >= pageCount}>
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setPageIndex(pageCount - 1)}
-            disabled={pageIndex + 1 >= pageCount}
-          >
+          <Button variant="outline" size="icon" onClick={() => setPageIndex(pageCount - 1)} disabled={pageIndex + 1 >= pageCount}>
             <ChevronsRight className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
       {/* delete dialog */}
-      <AlertDialog
-        open={!!toDelete}
-        onOpenChange={(o) => !o && setToDelete(null)}
-      >
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete section?</AlertDialogTitle>
@@ -320,9 +284,7 @@ export function SectionsTable() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
