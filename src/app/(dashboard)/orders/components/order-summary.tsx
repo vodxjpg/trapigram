@@ -51,6 +51,7 @@ export default function OrderSummary({
     onCreateOrder,
     createDisabled,
 }: OrderSummaryProps) {
+    const ctaLabel = orderGenerated ? "Update Order" : "Create Order";
     return (
         <Card>
             <CardHeader>
@@ -113,7 +114,7 @@ export default function OrderSummary({
             </CardContent>
             <CardFooter className="flex flex-col gap-3">
                 <Button onClick={onCreateOrder} disabled={createDisabled} className="w-full">
-                    Create Order
+                    {ctaLabel}
                 </Button>
             </CardFooter>
         </Card>
