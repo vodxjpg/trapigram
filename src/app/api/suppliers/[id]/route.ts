@@ -52,11 +52,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const nextPhone =
     has("phone")
       ? (body.phone === null
-          ? null
-          : (() => {
-              const t = String(body.phone ?? "").trim();
-              return t.length ? t : null;
-            })())
+        ? null
+        : (() => {
+          const t = String(body.phone ?? "").trim();
+          return t.length ? t : null;
+        })())
       : undefined;
 
   // Nothing to change?

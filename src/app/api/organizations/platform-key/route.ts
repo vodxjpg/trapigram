@@ -52,10 +52,10 @@ export async function GET(req: NextRequest) {
     const lastUpdated =
       platformKeys.length > 0
         ? new Date(
-            Math.max(
-              ...platformKeys.map((k) => new Date(k.updatedAt as any).getTime()),
-            ),
-          ).toISOString()
+          Math.max(
+            ...platformKeys.map((k) => new Date(k.updatedAt as any).getTime()),
+          ),
+        ).toISOString()
         : null;
 
     const signature = computeSignature(
@@ -121,13 +121,13 @@ export async function POST(req: NextRequest) {
 
     let saved:
       | {
-          id: string;
-          organizationId: string;
-          platform: string;
-          apiKey: string;
-          createdAt: Date;
-          updatedAt: Date;
-        }
+        id: string;
+        organizationId: string;
+        platform: string;
+        apiKey: string;
+        createdAt: Date;
+        updatedAt: Date;
+      }
       | null = null;
 
     const now = new Date();
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
 
     // 🔔 Nudge the bot service to pick up the new/updated key immediately.
     // Fire-and-forget (no await) so the user doesn’t wait on the bot side.
-    notifyBotServicePlatformKeysChanged(organizationId).catch(() => {});
+    notifyBotServicePlatformKeysChanged(organizationId).catch(() => { });
 
     return NextResponse.json(saved, { status: 200 });
   } catch (error: any) {

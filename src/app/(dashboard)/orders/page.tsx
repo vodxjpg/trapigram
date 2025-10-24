@@ -431,7 +431,7 @@ export default function OrdersPage() {
         header: "Actions",
         cell: ({ row }) => {
           const o = row.original;
-          const canEdit = canUpdate && o.status === "open";
+          const canEdit = canUpdate && (o.status === "open" || o.status === "paid" || o.status === "pending_payment");
           return (
             <div className="text-right">
               <DropdownMenu>

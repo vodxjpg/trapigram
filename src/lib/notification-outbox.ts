@@ -71,19 +71,19 @@ export async function enqueueNotificationFanout(opts: {
     const dedupeKey = isAdminOnlyOrder
       ? `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
       : makeDedupeKey({
-          org: opts.organizationId,
-          order: opts.orderId ?? null,
-          orderInPayload: opts.payload.orderId ?? null,
-          type: opts.type,
-          trigger: opts.trigger ?? null,
-          channel: ch,
-          salt: normalizedSalt,
-          clientId: opts.payload.clientId ?? null,
-          userId: opts.payload.userId ?? null,
-          vars: opts.payload.variables ?? {},
-          subject: opts.payload.subject ?? "",
-          message: opts.payload.message ?? "",
-        });
+        org: opts.organizationId,
+        order: opts.orderId ?? null,
+        orderInPayload: opts.payload.orderId ?? null,
+        type: opts.type,
+        trigger: opts.trigger ?? null,
+        channel: ch,
+        salt: normalizedSalt,
+        clientId: opts.payload.clientId ?? null,
+        userId: opts.payload.userId ?? null,
+        vars: opts.payload.variables ?? {},
+        subject: opts.payload.subject ?? "",
+        message: opts.payload.message ?? "",
+      });
 
     rows.push({
       id: `out_${uuidv4()}`,

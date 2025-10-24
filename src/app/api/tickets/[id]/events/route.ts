@@ -64,7 +64,7 @@ export async function GET(
         // @ts-ignore
         client.off?.("notification", handler);
         // Best-effort UNLISTEN (don't throw if it fails)
-        client.query(`UNLISTEN ${chan}`).catch(() => {});
+        client.query(`UNLISTEN ${chan}`).catch(() => { });
         // Release back to pool
         // @ts-ignore PoolClient has release()
         client.release?.();

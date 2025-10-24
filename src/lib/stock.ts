@@ -91,13 +91,13 @@ export async function adjustStock(
          $4,  -- country
          $5,  -- quantity
          NULL, NULL, NOW(), NOW())`,
- [
-   isAffiliate ? null : productId,
-   isAffiliate ? productId : null,
-   variationId,
-   country,
-   Math.max(0, newQty),
- ],
+      [
+        isAffiliate ? null : productId,
+        isAffiliate ? productId : null,
+        variationId,
+        country,
+        Math.max(0, newQty),
+      ],
     );
   }
 }

@@ -211,18 +211,18 @@ export async function GET(req: NextRequest) {
             eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")]),
           ),
         )
-              .groupBy("p.id")
-      // Case-insensitive sort for text columns in JOIN path
-      .$if(orderBy === "title", (q) =>
-        q.orderBy(sql`lower(p.title)`, orderDir as any)
-      )
-      .$if(orderBy === "sku", (q) =>
-        q.orderBy(sql`lower(p.sku)`, orderDir as any)
-      )
-      .$if(orderBy !== "title" && orderBy !== "sku", (q) =>
-        q.orderBy(("p." + orderBy) as any, orderDir)
-      )
-      .orderBy("p.id", "asc")
+        .groupBy("p.id")
+        // Case-insensitive sort for text columns in JOIN path
+        .$if(orderBy === "title", (q) =>
+          q.orderBy(sql`lower(p.title)`, orderDir as any)
+        )
+        .$if(orderBy === "sku", (q) =>
+          q.orderBy(sql`lower(p.sku)`, orderDir as any)
+        )
+        .$if(orderBy !== "title" && orderBy !== "sku", (q) =>
+          q.orderBy(("p." + orderBy) as any, orderDir)
+        )
+        .orderBy("p.id", "asc")
         .limit(pageSize)
         .offset((page - 1) * pageSize);
 
@@ -230,14 +230,14 @@ export async function GET(req: NextRequest) {
     } else {
       // No term filter → use the original simple products query
       // Case-insensitive sort for text columns; deterministic tie-break by id.
-       if (orderBy === "title") {
-         idQuery = idQuery.orderBy(sql`lower(title)`, orderDir as any);
-       } else if (orderBy === "sku") {
-         idQuery = idQuery.orderBy(sql`lower(sku)`, orderDir as any);
-       } else {
-         idQuery = idQuery.orderBy(orderBy as any, orderDir);
-       }
-       idRows = await idQuery
+      if (orderBy === "title") {
+        idQuery = idQuery.orderBy(sql`lower(title)`, orderDir as any);
+      } else if (orderBy === "sku") {
+        idQuery = idQuery.orderBy(sql`lower(sku)`, orderDir as any);
+      } else {
+        idQuery = idQuery.orderBy(orderBy as any, orderDir);
+      }
+      idRows = await idQuery
         .orderBy("id", "asc")
         .limit(pageSize)
         .offset((page - 1) * pageSize)
@@ -306,7 +306,7 @@ export async function GET(req: NextRequest) {
     /* -------- STEP 2 – core product rows ------------------------
      NOTE: we DO NOT sort here again by title/sku.
      We preserve the order from STEP 1 using the list of ids. */
-  let productRows = await db
+    let productRows = await db
       .selectFrom("products")
       .select([
         "id",

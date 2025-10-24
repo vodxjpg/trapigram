@@ -51,13 +51,13 @@ export async function GET(
   const sqlText = isService
     ? baseSql.replace("/**MEMBERSHIP**/", "")
     : baseSql.replace(
-        "/**MEMBERSHIP**/",
-        `AND EXISTS (
+      "/**MEMBERSHIP**/",
+      `AND EXISTS (
            SELECT 1 FROM member
             WHERE "organizationId" = o.id
               AND "userId"       = $2
          )`
-      );
+    );
 
   try {
     const { rows } = await pool.query(sqlText, [identifier, userId]);

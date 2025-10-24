@@ -202,8 +202,8 @@ export async function sendNotification(params: SendNotificationParams) {
    * ──────────────────────────────── */
   let resolvedOrganizationId = organizationId;
   let resolvedClientId = clientId;
-   let resolvedOrderId = orderId;
-   let resolvedTicketId = ticketId;
+  let resolvedOrderId = orderId;
+  let resolvedTicketId = ticketId;
 
   if ((type === "ticket_created" || type === "ticket_replied") && ticketId) {
     try {
@@ -279,13 +279,13 @@ export async function sendNotification(params: SendNotificationParams) {
     }
   }
 
-    /* ────────────────────────────────
-   * SAFETY GUARD (orders):
-   * For any order-related notification (status changes, messages, etc.)
-   * if an orderId is provided, derive the authoritative organization/client
-   * from the order row. This prevents cross-org/group routing when a caller
-   * accidentally passes the wrong org/client.
-   * ──────────────────────────────── */
+  /* ────────────────────────────────
+ * SAFETY GUARD (orders):
+ * For any order-related notification (status changes, messages, etc.)
+ * if an orderId is provided, derive the authoritative organization/client
+ * from the order row. This prevents cross-org/group routing when a caller
+ * accidentally passes the wrong org/client.
+ * ──────────────────────────────── */
   const isOrderRelated =
     type === "order_message" ||
     type === "order_placed" ||
@@ -434,9 +434,9 @@ export async function sendNotification(params: SendNotificationParams) {
     bodyUserGeneric = applyVars(message, variables);
   } else {
     const rawSubUser = makeRawSub(tplUser?.subject, subject);
-    const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
-    subjectUserGeneric  = applyVars(rawSubUser, variables);
-    subjectAdminGeneric = applyVars(rawSubAdm,  variables);
+    const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
+    subjectUserGeneric = applyVars(rawSubUser, variables);
+    subjectAdminGeneric = applyVars(rawSubAdm, variables);
     bodyUserGeneric = applyVars(tplUser?.message || message, variables);
     bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
   }
@@ -658,7 +658,7 @@ export async function sendNotification(params: SendNotificationParams) {
     const wantClientDM = finalUserFanout;
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
-    const bodyUserOut  = wantClientDM   ? bodyUserGeneric  : "";
+    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
     console.log("[notify] TELEGRAM fanout", {
       isTicket,
       wantAdminGroups,
@@ -835,10 +835,10 @@ async function dispatchTelegram(opts: {
       const markup =
         ticketId && ticketSet.has(id)
           ? JSON.stringify({
-              inline_keyboard: [
-                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-              ],
-            })
+            inline_keyboard: [
+              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+            ],
+          })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }

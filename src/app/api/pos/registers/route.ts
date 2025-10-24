@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
       const id = uuidv4();
       const { rows } = await pool.query(
-       `INSERT INTO registers
+        `INSERT INTO registers
           (id,"organizationId","storeId",name,active,"createdAt","updatedAt")
         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
         RETURNING *`,

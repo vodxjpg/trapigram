@@ -12,7 +12,7 @@ const DRAW_RULES = false;
 
 const log = (...a: any[]) => console.log("[pos:receipt-pdf]", ...a);
 const warn = (...a: any[]) => console.warn("[pos:receipt-pdf][warn]", ...a);
-const err  = (...a: any[]) => console.error("[pos:receipt-pdf][error]", ...a);
+const err = (...a: any[]) => console.error("[pos:receipt-pdf][error]", ...a);
 
 function addressToLines(addr: any): string[] {
   if (!addr) return [];
@@ -40,8 +40,8 @@ async function tryEmbedImage(pdf: PDFDocument, req: NextRequest, url: string) {
     if (!url) return null;
     if (/^data:image\/(png|jpe?g);base64,/i.test(url)) {
       const bytes = Uint8Array.from(Buffer.from(url.split(",")[1], "base64"));
-      try { return await pdf.embedPng(bytes); } catch {}
-      try { return await pdf.embedJpg(bytes); } catch {}
+      try { return await pdf.embedPng(bytes); } catch { }
+      try { return await pdf.embedJpg(bytes); } catch { }
       return null;
     }
     const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
@@ -53,9 +53,9 @@ async function tryEmbedImage(pdf: PDFDocument, req: NextRequest, url: string) {
     const ext = (src.split(".").pop() || "").toLowerCase();
     const looksPng = ct.includes("png") || ext === "png";
     const looksJpg = ct.includes("jpeg") || ct.includes("jpg") || ext === "jpg" || ext === "jpeg";
-    try { if (looksPng) return await pdf.embedPng(bytes); if (looksJpg) return await pdf.embedJpg(bytes); } catch {}
-    try { return await pdf.embedPng(bytes); } catch {}
-    try { return await pdf.embedJpg(bytes); } catch {}
+    try { if (looksPng) return await pdf.embedPng(bytes); if (looksJpg) return await pdf.embedJpg(bytes); } catch { }
+    try { return await pdf.embedPng(bytes); } catch { }
+    try { return await pdf.embedJpg(bytes); } catch { }
     return null;
   } catch { return null; }
 }
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const meta = typeof org.rows[0].metadata === "string" ? JSON.parse(org.rows[0].metadata) : org.rows[0].metadata ?? {};
         currency = meta?.currency || currency;
       }
-    } catch {}
+    } catch { }
 
     const { storeId } = await resolveStoreId(order, ctx.organizationId);
 
@@ -198,7 +198,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const rule = () => {
       if (!DRAW_RULES) { spacer(RULE_GAP); return; }
       y -= 2;
-      page.drawLine({ start: { x: margin, y }, end: { x: page.getWidth() - margin, y }, thickness: 0.5, color: rgb(0.8,0.8,0.8) });
+      page.drawLine({ start: { x: margin, y }, end: { x: page.getWidth() - margin, y }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
       y -= 6;
     };
 
@@ -238,7 +238,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           const r = c.rows[0];
           return [r.firstName, r.lastName].filter(Boolean).join(" ").trim() || "Customer";
         }
-      } catch {}
+      } catch { }
       return "Customer";
     })()), BASE);
 

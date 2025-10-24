@@ -42,7 +42,7 @@ function findTier(
         (!!variationId && p.variationId === variationId),
     );
   const candidates = tiers.filter(inTier);
-   if (!candidates.length) return null;
+  if (!candidates.length) return null;
 
   const targets = (t: Tier): string[] =>
     ((((t as any).clients as string[] | undefined) ??
@@ -152,7 +152,7 @@ export async function PATCH(
         basePrice = p.price;
       }
 
-            /* POS-only guard: disallow shared products for POS carts */
+      /* POS-only guard: disallow shared products for POS carts */
       if (channel === "pos" && !isAffiliate) {
         const { rows: prodOrgRows } = await client.query<{ organizationId: string }>(
           `SELECT "organizationId" FROM products WHERE id = $1`,

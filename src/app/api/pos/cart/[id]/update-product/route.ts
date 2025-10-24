@@ -171,7 +171,7 @@ function readLabelish(x: any): string | null {
   if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
   if (typeof x === "number" || typeof x === "boolean") return String(x);
   if (typeof x === "object") {
-    const keys = ["optionName","valueName","label","name","title","value","text"];
+    const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
     for (const k of keys) {
       if (x[k] != null) {
         const v = readLabelish(x[k]);
@@ -219,7 +219,7 @@ function withTimeout<T>(p: Promise<T>, ms: number) {
   ]);
 }
 function fireAndForget(p: Promise<any>) {
-  p.catch(() => {});
+  p.catch(() => { });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -582,7 +582,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             ? r.parent_title
             : formatVariationTitle(r.parent_title, r.var_attributes);
           const image = r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null);
-          const sku   = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
+          const sku = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
           return {
             id: r.pid,
             title,

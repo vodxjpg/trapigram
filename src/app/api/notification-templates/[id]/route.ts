@@ -49,12 +49,12 @@ export async function GET(
     countries: Array.isArray((row as any).countries)
       ? (row as any).countries
       : (() => {
-          try {
-            return JSON.parse((row as any).countries || "[]");
-          } catch {
-            return [];
-          }
-        })(),
+        try {
+          return JSON.parse((row as any).countries || "[]");
+        } catch {
+          return [];
+        }
+      })(),
   };
 
   return NextResponse.json(parsed, { status: 200 });

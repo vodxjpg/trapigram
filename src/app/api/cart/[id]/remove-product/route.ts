@@ -112,7 +112,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
       return NextResponse.json({ error: "Cart line not found" }, { status: 404 });
     }
 
-   /* country + level + client lookup – used for stock + tier recompute and affiliate refunds */
+    /* country + level + client lookup – used for stock + tier recompute and affiliate refunds */
     const { rows: cRows } = await pool.query(
       `SELECT cl.country, cl."levelId", ca."clientId"
          FROM carts ca

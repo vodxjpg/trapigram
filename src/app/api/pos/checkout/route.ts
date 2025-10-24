@@ -723,11 +723,11 @@ export async function POST(req: NextRequest) {
     const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
     const orderKey = `POS-${seqNum}`;
     const primaryMethodName =
-          payments.length === 0
-            ? null
-            : (payments.length > 1
-              ? 'split'
-              : (methods.find((m:any) => String(m.id) === String(payments[0].methodId))?.name ?? null))
+      payments.length === 0
+        ? null
+        : (payments.length > 1
+          ? 'split'
+          : (methods.find((m: any) => String(m.id) === String(payments[0].methodId))?.name ?? null))
 
 
     let orderChannel = summary.channel;
@@ -803,7 +803,7 @@ export async function POST(req: NextRequest) {
       discountValueArr,
       "-",
       new Date(),                  // dateCreated
-      datePaid,     
+      datePaid,
       dateCompleted,
       null,                        // dateCancelled
       initialOrderMeta,
@@ -1036,7 +1036,7 @@ export async function POST(req: NextRequest) {
           undefined) as { chain?: string; asset?: string; amount?: number } | undefined;
         // Sum Niftipay split amount using method names (in case amount wasn't supplied)
         const methodIds = Array.from(new Set((rawBody?.payments ?? payments ?? [])
-  .map((p: any) => String(p.methodId))));
+          .map((p: any) => String(p.methodId))));
         let niftiAmount = 0;
         if (methodIds.length) {
           const { rows: pmRows } = await pool.query(
@@ -1087,7 +1087,7 @@ export async function POST(req: NextRequest) {
           }
         }
       } catch (e) {
-                // Non-fatal: we still return the order; cashier can retry from the order page
+        // Non-fatal: we still return the order; cashier can retry from the order page
         console.warn("[POS checkout][niftipay] invoice creation failed", {
           err: String(e),
           hasNifti: !!rawBody?.niftipay,

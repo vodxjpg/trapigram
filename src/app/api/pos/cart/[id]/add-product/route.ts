@@ -203,7 +203,7 @@ function readLabelish(x: any): string | null {
   if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
   if (typeof x === "number" || typeof x === "boolean") return String(x);
   if (typeof x === "object") {
-    const keys = ["optionName","valueName","label","name","title","value","text"];
+    const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
     for (const k of keys) {
       if (x[k] != null) {
         const v = readLabelish(x[k]);
@@ -258,7 +258,7 @@ function withTimeout<T>(p: Promise<T>, ms: number) {
   ]);
 }
 function fireAndForget(p: Promise<any>) {
-  p.catch(() => {}); // silence
+  p.catch(() => { }); // silence
 }
 
 /* ───────────────────────────────────────────────────────────── */
@@ -514,7 +514,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         setTimeout(() => {
           fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
         }, 0);
-      } catch {}
+      } catch { }
       mark("emit_display_sched");
 
       // Single-roundtrip snapshot with proper variant titles
@@ -567,7 +567,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? r.parent_title
           : formatVariationTitle(r.parent_title, r.var_attributes);
         const image = r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null);
-        const sku   = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
+        const sku = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
         return {
           id: r.pid,
           title,
@@ -593,7 +593,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         },
       };
     } catch (err: any) {
-      try { if (client) await client.query("ROLLBACK"); } catch {}
+      try { if (client) await client.query("ROLLBACK"); } catch { }
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
@@ -601,7 +601,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       console.error("[POS POST /pos/cart/:id/add-product]", err);
       return { status: 500, body: { error: err.message ?? "Internal server error" }, headers: BASE_HEADERS };
     } finally {
-      try { if (client) client.release(); } catch {}
+      try { if (client) client.release(); } catch { }
     }
   });
 }

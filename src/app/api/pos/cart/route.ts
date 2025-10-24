@@ -134,13 +134,13 @@ export async function POST(req: NextRequest) {
             try {
               const parsed = JSON.parse(row.countries);
               if (Array.isArray(parsed) && parsed.length) first = parsed[0];
-            } catch {}
+            } catch { }
           }
           if (!first && row.metadata) {
             try {
               const m = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
               first = m?.defaultCountry || m?.country || null;
-            } catch {}
+            } catch { }
           }
           if (first && typeof first === "string" && first.length === 2) return first.toUpperCase();
         }

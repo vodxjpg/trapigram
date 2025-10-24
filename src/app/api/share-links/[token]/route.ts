@@ -61,12 +61,12 @@ export async function GET(
       Array.isArray(warehouse.countries)
         ? warehouse.countries
         : (() => {
-            try {
-              return JSON.parse((warehouse as any).countries || "[]");
-            } catch {
-              return [];
-            }
-          })();
+          try {
+            return JSON.parse((warehouse as any).countries || "[]");
+          } catch {
+            return [];
+          }
+        })();
 
     // 4) Shared products
     const sharedProducts = await db
@@ -91,12 +91,12 @@ export async function GET(
       cost:
         typeof p.cost === "string"
           ? (() => {
-              try {
-                return JSON.parse(p.cost as unknown as string);
-              } catch {
-                return p.cost;
-              }
-            })()
+            try {
+              return JSON.parse(p.cost as unknown as string);
+            } catch {
+              return p.cost;
+            }
+          })()
           : p.cost,
     }));
 

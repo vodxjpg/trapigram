@@ -10,7 +10,7 @@ if (!process.env.INTERNAL_API_SECRET) {
 }
 
 export async function POST(req: NextRequest) {
-   // 1) auth
+  // 1) auth
   // Normal path: require secret.
   // Dev/staging fallback: allow same-process callers that explicitly opt in via header.
   const unsafeLocal = req.headers.get("x-local-invoke") === "1";

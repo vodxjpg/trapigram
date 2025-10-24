@@ -156,7 +156,7 @@ export async function getRevenue(id: string, organizationId: string) {
     const to = Math.floor(paidAt.getTime() / 1000);
     const from = to - 3600;
 
-        // products (first-party + affiliate) – include variationId and unitPrice
+    // products (first-party + affiliate) – include variationId and unitPrice
     const productResult = await pool.query(
       `SELECT p.*, cp.quantity, cp."variationId", cp."unitPrice"
          FROM "cartProducts" cp
@@ -176,7 +176,7 @@ export async function getRevenue(id: string, organizationId: string) {
     const affiliate = affiliateResult.rows;
 
     // categories
-        const categoryResult = await pool.query(
+    const categoryResult = await pool.query(
       `SELECT cp."quantity", cp."variationId", cp."unitPrice",
               p."id" AS "productId", p."regularPrice", p."price", p."cost",
               pc."categoryId"
@@ -188,7 +188,7 @@ export async function getRevenue(id: string, organizationId: string) {
     );
     const categoryData = categoryResult.rows;
 
-        // ── variation-aware effective cost resolver (shared/normal)
+    // ── variation-aware effective cost resolver (shared/normal)
     const mappingCache = new Map<
       string,
       { shareLinkId: string; sourceProductId: string } | null

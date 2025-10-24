@@ -61,7 +61,7 @@ async function runGenerateInvoices(req: NextRequest) {
 
   console.log(
     `[generate-invoices] invoked for date=${new Date(today).toISOString().slice(0, 10)} (day=${genDay}) ` +
-      `isCronHeader=${isCronHeader} cronAuthorized=${cronOk}, graceDays=${GRACE_DAYS}`
+    `isCronHeader=${isCronHeader} cronAuthorized=${cronOk}, graceDays=${GRACE_DAYS}`
   );
 
   // 2a) dueDate = today + 7d (UTC)
@@ -91,8 +91,7 @@ async function runGenerateInvoices(req: NextRequest) {
     }
   );
   console.log(
-    `[generate-invoices] eligible owners (signup DOM === ${genDay}): ${
-      eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>"
+    `[generate-invoices] eligible owners (signup DOM === ${genDay}): ${eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>"
     }`
   );
 

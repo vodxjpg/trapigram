@@ -66,23 +66,23 @@ const multiPayload = z.object({
         type: z.literal("product_recommendation"),
         payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
       }),
-         z.object({
-     type: z.literal("multiply_points"),
-     payload: z.object({
-       // avoid .gt for older Zod; use refine instead
-       factor: z.coerce.number().refine((n) => n > 0, {
-         message: "Multiplier must be > 0",
-       }),
-       description: z.string().optional(),
-     }),
-   }),
-         z.object({
-     type: z.literal("award_points"),
-     payload: z.object({
-       points: positiveOneDecimal,
-       description: z.string().optional(),
-     }),
-   }),
+      z.object({
+        type: z.literal("multiply_points"),
+        payload: z.object({
+          // avoid .gt for older Zod; use refine instead
+          factor: z.coerce.number().refine((n) => n > 0, {
+            message: "Multiplier must be > 0",
+          }),
+          description: z.string().optional(),
+        }),
+      }),
+      z.object({
+        type: z.literal("award_points"),
+        payload: z.object({
+          points: positiveOneDecimal,
+          description: z.string().optional(),
+        }),
+      }),
     ])
   ).min(1, "Add at least one action"),
   scope: scopeEnum.optional(), // NEW

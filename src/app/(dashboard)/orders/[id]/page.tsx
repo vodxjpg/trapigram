@@ -537,16 +537,31 @@ export default function OrderView() {
                     {lines.map((l, idx) => (
                       <TableRow key={`${keyOf(l)}:${l.variationId ?? "base"}:${l.sku}:${idx}`}>
                         <TableCell>
-                          <div className="h-20 w-20 relative rounded-md overflow-hidden">
-                            <Image
-                              src={l.image || "/placeholder.svg"}
-                              alt={l.title}
-                              fill
-                              sizes="80px"
-                              className="object-cover"
-                            />
-                          </div>
+                          {l.image ? (
+                            <div className="h-20 w-20 relative rounded-md overflow-hidden">
+                              <Image
+                                src={l.image}
+                                alt={l.title}
+                                fill
+                                sizes="80px"
+                                className="object-cover"
+                              />
+                            </div>
+                          ) : (
+                            <Avatar className="h-20 w-20">
+                              <AvatarFallback className="h-full w-full rounded-full text-base font-semibold">
+                                {((l.title ?? "")
+                                  .trim()
+                                  .split(/\s+/)
+                                  .slice(0, 2)
+                                  .map((w) => w[0])
+                                  .join("") || "NA"
+                                ).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
                         </TableCell>
+
 
                         <TableCell className="font-medium">
                           {l.title}

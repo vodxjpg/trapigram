@@ -167,7 +167,7 @@ async function appendOrderAutomationEvent(opts: {
     [orderId, organizationId],
   );
 
-    const raw = rows[0]?.orderMeta;
+  const raw = rows[0]?.orderMeta;
   let meta: any;
   try {
     meta = typeof raw === "string" ? JSON.parse(raw) : (raw ?? {});

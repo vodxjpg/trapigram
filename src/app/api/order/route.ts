@@ -522,12 +522,12 @@ export async function POST(req: NextRequest) {
             method: "POST",
             headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET, "x-vercel-background": "1", accept: "application/json" },
             keepalive: true,
-          }).catch(() => {});
+          }).catch(() => { });
         } else {
           const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
           await drainNotificationOutbox(12);
         }
-      } catch {}
+      } catch { }
     } catch (e) {
       console.warn("[order:POST] creation fanout failed", e);
     }

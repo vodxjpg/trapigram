@@ -141,8 +141,8 @@ export async function PATCH(
       clients: Array.isArray(raw?.clients)
         ? raw.clients
         : Array.isArray(raw?.customers)
-        ? raw.customers
-        : undefined, // undefined means "do not change clients"
+          ? raw.customers
+          : undefined, // undefined means "do not change clients"
     };
 
     let body: z.infer<typeof patchSchema>;
