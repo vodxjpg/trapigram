@@ -1383,6 +1383,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
               clientCountry={clientCountry}
               onCreateOrder={handleUpdateOrder}
               createDisabled={!orderData}
+              create={false}
             />
 
             {/* Moved here: Order Notes (as a component below Order Summary) */}

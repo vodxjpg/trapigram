@@ -37,6 +37,8 @@ export interface OrderSummaryProps {
 
     /** Disable state for Create button (same conditions as original) */
     createDisabled: boolean;
+
+    create: boolean;
 }
 
 export default function OrderSummary({
@@ -50,8 +52,9 @@ export default function OrderSummary({
     clientCountry,
     onCreateOrder,
     createDisabled,
+    create
 }: OrderSummaryProps) {
-    const ctaLabel = orderGenerated ? "Update Order" : "Create Order";
+    const ctaLabel = create ? "Create Order" : "Update Order";
     return (
         <Card>
             <CardHeader>

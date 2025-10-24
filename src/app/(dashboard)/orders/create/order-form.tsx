@@ -1486,19 +1486,22 @@ export default function OrderForm() {
         </div>
 
         {/* RIGHT COLUMN: Order Summary (moved into its own component) */}
-        <div className="lg:col-span-1">
-          <OrderSummary
-            orderGenerated={orderGenerated}
-            clientEmail={clientEmail}
-            itemsCount={orderItems.length}
-            itemsSubtotal={itemsSubtotal}        // NEW: show subtotal
-            discountTotal={discountTotal}
-            shippingCost={shippingCost}
-            total={total}
-            clientCountry={clientCountry}
-            createDisabled={createDisabled}
-            onCreateOrder={createOrder}
-          />
+        <div className="lg:col-span-1 lg:sticky lg:top-6 self-start">
+          <div className="space-y-6 max-h-[calc(100vh-3rem)] overflow-y-auto pr-1">
+            <OrderSummary
+              orderGenerated={orderGenerated}
+              clientEmail={clientEmail}
+              itemsCount={orderItems.length}
+              itemsSubtotal={itemsSubtotal}        // NEW: show subtotal
+              discountTotal={discountTotal}
+              shippingCost={shippingCost}
+              total={total}
+              clientCountry={clientCountry}
+              createDisabled={createDisabled}
+              onCreateOrder={createOrder}
+              create={true}
+            />
+          </div>
         </div>
       </div>
     </div>
