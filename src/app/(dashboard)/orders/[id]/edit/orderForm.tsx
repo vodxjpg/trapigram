@@ -6,46 +6,24 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import {
-  CreditCard,
-  Package,
-  Tag,
-  DollarSign,
-  Truck,
-  Trash2,
-  MessageSquarePlus,
-  Eye, EyeOff, Trash, Loader2,
-  Minus,
-  Plus,
-  Search,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
   Card,
   CardContent,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SelectGroup,
-  SelectLabel,
-  SelectSeparator,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
+
 import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { Tag } from "lucide-react";
 import { toast } from "sonner";
-import { formatCurrency } from "@/lib/currency";
+
 import ProductSelect from "../../components/product-select";
+import DiscountCoupon from "../../components/discount-coupon";
+import ShippingAddress from "../../components/shipping-address";
+import ShippingOptions from "../../components/shipping-options";
+import PaymentMethod from "../../components/payment-method";
+import OrderSummary from "../../components/order-summary";
+import OrderNotes from "../../components/order-notes";
 
 /* ——————————————————— TYPES ——————————————————— */
 interface OrderFormWithFetchProps {
@@ -467,6 +445,28 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     discountType,
   ]);
 
+  // ⬇️ NEW: hydrate from orderData once it’s fetched
+  useEffect(() => {
+    if (!orderData) return;
+
+    const hasCoupon = Boolean(orderData.coupon);
+    setCouponApplied(hasCoupon);
+    setCouponCode(orderData.coupon || "");
+    setNewCoupon(""); // input starts empty for “apply new”
+
+    setDiscount(Number(orderData.discount ?? 0));
+    setValue(Number(orderData.discountValue ?? 0));
+    setDiscountType(
+      String(orderData.couponType || "").toLowerCase() === "percentage"
+        ? "percentage"
+        : "fixed"
+    );
+    if (typeof orderData.subtotal === "number") {
+      setSubtotal(orderData.subtotal);
+    }
+  }, [orderData]);
+
+
   /* ——————————————————— FETCH ORDER + ADDRESSES ——————————————————— */
   useEffect(() => {
     if (!orderId) return;
@@ -810,7 +810,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   };
 
   // Apply coupon (single field on edit)
-  const handleApplyCoupon = async () => {
+  const handleApplyCoupon = useCallback(async () => {
     if (!newCoupon || !orderData?.cartId || !orderData?.id) return;
     try {
       const patchRes = await fetch(`/api/cart/${orderData.cartId}/apply-coupon`, {
@@ -818,27 +818,51 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: newCoupon, total: subtotal }),
       });
-      if (!patchRes.ok) throw new Error("Failed to apply coupon to cart");
+      if (!patchRes.ok) throw new Error("Failed to apply coupon");
       const data = await patchRes.json();
       const { discountAmount: amt, discountType: dt, discountValue: dv, cc } = data;
 
       if (cc === null) {
+        // remove coupon UI state
         setCouponCode("");
         setCouponApplied(false);
         toast.error("Coupon can't be applied!");
       } else {
-        setDiscount(amt);
-        setValue(dv);
-        setDiscountType(dt);
+        // update state to the newly applied coupon
+        setDiscount(Number(amt || 0));
+        setValue(Number(dv || 0));
+        setDiscountType(String(dt || "").toLowerCase() === "percentage" ? "percentage" : "fixed");
         setCouponApplied(true);
+        setCouponCode(newCoupon);
         toast.success("Coupon applied!");
       }
+      // keep input
       setNewCoupon(newCoupon);
       setShowNewCoupon(true);
     } catch (err) {
       console.error(err);
+      toast.error("Failed to apply coupon");
     }
-  };
+  }, [newCoupon, orderData?.cartId, orderData?.id, subtotal]);
+
+  // ─────────────────────────────────────────────
+  // NEW: derived breakdown for the shared component
+  // ─────────────────────────────────────────────
+  const couponBreakdown = useMemo(() => {
+    if (!couponApplied) return [];
+    const code =
+      couponCode && couponCode.trim().length > 0 ? couponCode : newCoupon;
+    const after = Math.max(0, subtotal - discount);
+    return [
+      {
+        code,
+        discountType,
+        discountValue: value,
+        discountAmount: discount,
+        subtotalAfter: after,
+      },
+    ];
+  }, [couponApplied, couponCode, newCoupon, discountType, value, discount, subtotal]);
 
   /* ——————————————————— PRODUCTS: Add/Remove/Update ——————————————————— */
 
@@ -1222,103 +1246,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquarePlus className="h-5 w-5" /> Order Notes
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant={notesScope === "staff" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setNotesScope("staff")}
-                  >
-                    Staff view
-                  </Button>
-                  <Button
-                    variant={notesScope === "customer" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setNotesScope("customer")}
-                  >
-                    Customer view
-                  </Button>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Public notes are visible to the customer.
-                </div>
-              </div>
-
-              <div className="border rounded-lg">
-                <ScrollArea className="h-64">
-                  <div className="p-3 space-y-3">
-                    {notesLoading ? (
-                      <div className="flex items-center justify-center py-8 text-muted-foreground">
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
-                      </div>
-                    ) : notes.length === 0 ? (
-                      <div className="text-center text-muted-foreground py-8">
-                        No notes yet.
-                      </div>
-                    ) : (
-                      notes.map((n) => (
-                        <div key={n.id} className="border rounded-md p-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="secondary">
-                                {n.authorRole === "staff" ? "Staff" : "Client"}
-                              </Badge>
-                              <Badge className={n.visibleToCustomer ? "bg-green-600" : "bg-gray-500"}>
-                                {n.visibleToCustomer ? "Customer-visible" : "Staff-only"}
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                size="icon" variant="ghost"
-                                onClick={() => toggleNoteVisibility(n.id, !n.visibleToCustomer)}
-                                title={n.visibleToCustomer ? "Make staff-only" : "Make public"}
-                              >
-                                {n.visibleToCustomer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                              </Button>
-                              <Button size="icon" variant="ghost" onClick={() => deleteNote(n.id)} title="Delete">
-                                <Trash className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                          <p className="mt-2 text-sm whitespace-pre-wrap">{n.note}</p>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {new Date(n.createdAt).toLocaleString()}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              <div className="space-y-3">
-                <Textarea
-                  value={newNote}
-                  placeholder="Add a note for this order…"
-                  onChange={(e) => setNewNote(e.target.value)}
-                />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Switch id="public-note-edit" checked={newNotePublic} onCheckedChange={setNewNotePublic} />
-                    <Label htmlFor="public-note-edit" className="text-sm">Visible to customer</Label>
-                  </div>
-                  <Button onClick={createNote} disabled={!newNote.trim() || !currentUserId || creatingNote}>
-                    {creatingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Add Note
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Product Selection (mirror Create page layout/UX) */}
           <ProductSelect
             // Gate: in the edit page, the order already exists → selector enabled
@@ -1355,285 +1282,125 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             parseQty={parseQty}
           />
 
+          {/* Coupon header (no Card). Shows current code and toggle to apply a new one */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Tag className="h-5 w-5" />
+              <span className="text-sm font-medium">Coupon apply:</span>
+              <span className="text-sm text-muted-foreground">
+                {newCoupon?.trim() ? newCoupon : (orderData?.coupon?.trim() || "—")}
+              </span>
+            </div>
 
-          {/* Discount Coupon (same component layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Tag className="h-5 w-5" /> Discount Coupon
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex justify-between items-center">
-                <p className="text-lg font-medium">
-                  {newCoupon ? newCoupon : orderData?.coupon || "—"}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="newCouponSwitch" className="text-sm">
-                    New coupon?
-                  </Label>
-                  <Switch
-                    id="newCouponSwitch"
-                    checked={showNewCoupon}
-                    onCheckedChange={setShowNewCoupon}
-                  />
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="newCouponSwitch" className="text-sm">Apply new code?</Label>
+              <Switch
+                id="newCouponSwitch"
+                checked={showNewCoupon}
+                onCheckedChange={setShowNewCoupon}
+              />
+            </div>
+          </div>
 
-              {showNewCoupon && (
-                <>
-                  <Separator />
-                  <div className="flex gap-4 flex-wrap">
-                    <Input
-                      className="flex-1 min-w-[200px]"
-                      placeholder="Enter coupon code"
-                      disabled={couponApplied}
-                      value={newCoupon}
-                      onChange={(e) => setNewCoupon(e.target.value)}
-                    />
-                    <Button
-                      disabled={!newCoupon || couponApplied}
-                      onClick={handleApplyCoupon}
-                    >
-                      Apply Coupon
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          {showNewCoupon && (
+            <DiscountCoupon
+              orderGenerated={true}
+              appliedCodes={
+                couponApplied
+                  ? [(couponCode?.trim() || orderData?.coupon?.trim() || "").trim()]
+                    .filter(Boolean) as string[]
+                  : []
+              }
+              discountTotal={discount}
+              clientCountry={clientCountry}
+              couponCode={newCoupon}
+              setCouponCode={setNewCoupon}
+              couponBreakdown={
+                couponApplied
+                  ? [{
+                    code: (couponCode?.trim() || orderData?.coupon?.trim() || "").trim(),
+                    discountType,
+                    discountValue: value,
+                    discountAmount: discount,
+                    subtotalAfter: Math.max(0, Number(subtotal) - Number(discount)),
+                  }]
+                  : []
+              }
+              applyCoupon={handleApplyCoupon}
+            />
+          )}
 
           {/* Shipping Address (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5" /> Shipping Address
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {addresses.map((addr) => (
-                  <label key={addr.id} className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="address"
-                      value={addr.id}
-                      checked={selectedAddressId === addr.id}
-                      onChange={() => setSelectedAddressId(addr.id)}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
-                  </label>
-                ))}
-              </div>
-              <Separator className="my-3" />
-              <div className="flex gap-4">
-                <Textarea
-                  className="flex-1 min-h-[140px] whitespace-pre-line"
-                  placeholder="New address (multi-line)"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                />
-                <Button onClick={handleAddAddress} disabled={!newAddress}>
-                  Add Address
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <ShippingAddress
+            orderGenerated={true}
+            addresses={addresses}
+            selectedAddressId={selectedAddressId}
+            setSelectedAddressId={setSelectedAddressId}
+            newAddress={newAddress}
+            setNewAddress={setNewAddress}
+            addAddress={handleAddAddress}
+          />
 
           {/* Shipping Method & Company (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5" /> Shipping
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Method */}
-                <div>
-                  <Label>Method</Label>
-                  <Select
-                    value={selectedShippingMethod}
-                    onValueChange={setSelectedShippingMethod}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select method"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingMethods.map((m) => {
-                        const tier = m.costs.find(
-                          ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost &&
-                            (maxOrderCost === 0 || total <= maxOrderCost)
-                        );
-                        const cost = tier ? tier.shipmentCost : 0;
-
-                        return (
-                          <SelectItem key={m.id} value={m.id}>
-                            <span className="block max-w-[280px] truncate">
-                              {m.title} — {m.description} — ${cost.toFixed(2)}
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Company */}
-                <div>
-                  <Label>Company</Label>
-                  <Select
-                    value={selectedShippingCompany}
-                    onValueChange={setSelectedShippingCompany}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select company"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingCompanies.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ShippingOptions
+            orderGenerated={true}
+            shippingLoading={shippingLoading}
+            shippingMethods={shippingMethods}
+            selectedShippingMethod={selectedShippingMethod}
+            setSelectedShippingMethod={setSelectedShippingMethod}
+            shippingCompanies={shippingCompanies}
+            selectedShippingCompany={selectedShippingCompany}
+            setSelectedShippingCompany={setSelectedShippingCompany}
+            /* matches your previous tier selection, which used "total".
+               The component expects the order value BEFORE shipping: subtotal - discount */
+            totalBeforeShipping={Math.max(0, (subtotal ?? 0) - (discount ?? 0))}
+          />
 
           {/* Payment Method (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" /> Payment Method
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Label>Select Payment Method</Label>
-              <Select
-                value={selectedPaymentMethod}
-                onValueChange={setSelectedPaymentMethod}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select payment method" />
-                </SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Niftipay chain / asset selector */}
-              {paymentMethods.find(
-                (p) =>
-                  p.id === selectedPaymentMethod &&
-                  p.name.toLowerCase() === "niftipay"
-              ) && (
-                  <div className="mt-4">
-                    <Label>Select Crypto Network</Label>
-                    <Select
-                      value={selectedNiftipay}
-                      onValueChange={setSelectedNiftipay}
-                      disabled={niftipayLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={niftipayLoading ? "Loading…" : "Select network"}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {niftipayNetworks.map((n) => (
-                          <SelectItem key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
-                            {n.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-            </CardContent>
-          </Card>
+          <PaymentMethod
+            orderGenerated={true}
+            paymentMethods={paymentMethods}
+            selectedPaymentMethod={selectedPaymentMethod}
+            setSelectedPaymentMethod={setSelectedPaymentMethod}
+            /* Niftipay selector (shown when the chosen PM is 'niftipay') */
+            niftipayNetworks={niftipayNetworks}
+            selectedNiftipay={selectedNiftipay}
+            setSelectedNiftipay={setSelectedNiftipay}
+          />
         </div>
 
         {/* RIGHT COLUMN: Order Summary */}
-        <div className="lg:col-span-1">
-          <Card className="sticky top-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" /> Order Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span>Client:</span>
-                  <span className="font-medium">{orderData?.clientEmail}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Items:</span>
-                  <span className="font-medium">
-                    {orderItems.reduce((sum, item) => sum + item.quantity, 0)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Subtotal:</span>
-                  <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
-                </div>
+        <div className="lg:col-span-1 lg:sticky lg:top-6 self-start">
+          <div className="space-y-6 max-h-[calc(100vh-3rem)] overflow-y-auto pr-1">
+            <OrderSummary
+              orderGenerated={true}
+              clientEmail={orderData?.clientEmail ?? ""}
+              itemsCount={orderItems.reduce((sum, item) => sum + item.quantity, 0)}
+              itemsSubtotal={subtotal}
+              discountTotal={discount}
+              shippingCost={orderData?.shipping ?? 0}
+              total={total}
+              clientCountry={clientCountry}
+              onCreateOrder={handleUpdateOrder}
+              createDisabled={!orderData}
+            />
 
-                {orderData?.pointsRedeemed > 0 && (
-                  <div className="flex justify-between text-blue-600">
-                    <span>Points Redeemed:</span>
-                    <span className="font-medium">
-                      {orderData.pointsRedeemed} pts
-                    </span>
-                  </div>
-                )}
-
-                {orderData?.pointsRedeemedAmount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Points Discount:</span>
-                    <span className="font-medium">
-                      -{formatCurrency(orderData.pointsRedeemedAmount, clientCountry)}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between text-green-600">
-                  <span>
-                    Discount
-                    {discountType === "percentage" ? ` (${value.toFixed(2)}%)` : ""}:
-                  </span>
-                  <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Shipping:</span>
-                  <span className="font-medium">
-                    {orderData?.shipping != null
-                      ? formatCurrency(orderData.shipping, clientCountry)
-                      : "—"}
-                  </span>
-                </div>
-                <Separator />
-                <div className="flex justify-between text-lg font-bold">
-                  <span>Total:</span>
-                  <span>{formatCurrency(total, clientCountry)}</span>
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3">
-              <Button className="w-full" onClick={handleUpdateOrder}>
-                Update Order
-              </Button>
-            </CardFooter>
-          </Card>
+            {/* Moved here: Order Notes (as a component below Order Summary) */}
+            <OrderNotes
+              notesScope={notesScope}
+              setNotesScope={setNotesScope}
+              notesLoading={notesLoading}
+              notes={notes}
+              newNote={newNote}
+              setNewNote={setNewNote}
+              newNotePublic={newNotePublic}
+              setNewNotePublic={setNewNotePublic}
+              creatingNote={creatingNote}
+              createNote={createNote}
+              toggleNoteVisibility={toggleNoteVisibility}
+              deleteNote={deleteNote}
+            />
+          </div>
         </div>
       </div>
     </div>

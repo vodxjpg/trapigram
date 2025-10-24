@@ -14,6 +14,7 @@ import ShippingAddress from "../components/shipping-address";
 import ShippingOptions from "../components/shipping-options";
 import PaymentMethod from "../components/payment-method";
 import OrderSummary from "../components/order-summary"; // ← NEW
+
 /* ─── constants ──────────────────────────────────────────────── */
 // If the env-var is set use it, otherwise fall back to the public endpoint.
 const NIFTIPAY_BASE = (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com").replace(

@@ -11,9 +11,6 @@ export interface OrderSummaryProps {
     /** Whether the order/cart has been generated */
     orderGenerated: boolean;
 
-    /** Right column stickiness */
-    sticky?: boolean;
-
     /** Customer email shown in the summary */
     clientEmail: string;
 
@@ -44,7 +41,6 @@ export interface OrderSummaryProps {
 
 export default function OrderSummary({
     orderGenerated,
-    sticky = true,
     clientEmail,
     itemsCount,
     itemsSubtotal,
@@ -56,7 +52,7 @@ export default function OrderSummary({
     createDisabled,
 }: OrderSummaryProps) {
     return (
-        <Card className={sticky ? "sticky top-6" : ""}>
+        <Card>
             <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                     <DollarSign className="h-5 w-5" /> Order Summary
