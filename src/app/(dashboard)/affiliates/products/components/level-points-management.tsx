@@ -1,3 +1,4 @@
+// app/(dashboard)/affiliates/products/components/level-points-management.tsx
 "use client";
 
 import { useEffect, useState } from "react";

@@ -1,3 +1,5 @@
+// app/(dashboard)/affiliates/products/components/points-management.tsx
+
 /* ────────────────────────────────────────────────────────────────
    Country-based Cost + Points table
 ───────────────────────────────────────────────────────────────── */
