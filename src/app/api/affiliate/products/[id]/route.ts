@@ -24,6 +24,25 @@ function jsonMaybe<T>(val: unknown): T | null {
   return val as T;
 }
 
+/* Type for points map used in merge */
+type PointsByLvl = Record<string, Record<string, { regular: number; sale: number | null }>>;
+
+/* Deep merge helper: base ⊕ delta (delta wins per level/country/field) */
+function deepMergePoints(base: PointsByLvl, delta: PointsByLvl): PointsByLvl {
+  const out: PointsByLvl = JSON.parse(JSON.stringify(base || {}));
+  for (const [lvl, countries] of Object.entries(delta || {})) {
+    out[lvl] ??= {};
+    for (const [cc, pts] of Object.entries(countries || {})) {
+      const prev = out[lvl][cc] ?? { regular: 0, sale: null };
+      out[lvl][cc] = {
+        regular: typeof pts?.regular === "number" ? pts.regular : prev.regular,
+        sale: pts?.sale === null || typeof pts?.sale === "number" ? pts.sale : prev.sale,
+      };
+    }
+  }
+  return out;
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
@@ -173,7 +192,10 @@ export async function GET(
     const vRegular = jsonMaybe<Record<string, Record<string, number>>>(v.regularPoints) ?? {};
     const vSale = jsonMaybe<Record<string, Record<string, number>> | null>(v.salePoints);
     const vCost = jsonMaybe<Record<string, number>>(v.cost) ?? {};
-    const vAttrs = typeof v.attributes === "string" ? jsonMaybe<Record<string, string>>(v.attributes) ?? {} : (v.attributes as any);
+    const vAttrs =
+      typeof v.attributes === "string"
+        ? jsonMaybe<Record<string, string>>(v.attributes) ?? {}
+        : (v.attributes as any);
 
     const pointsPrice = mergePointsByLevel(vRegular, vSale);
 
@@ -245,11 +267,29 @@ export async function PATCH(
       if (body.productType !== undefined) core.productType = body.productType;
       if (body.allowBackorders !== undefined) core.allowBackorders = body.allowBackorders;
       if (body.manageStock !== undefined) core.manageStock = body.manageStock;
+
+      // === Deep-merge points =====
       if (body.pointsPrice) {
-        const sp = splitPointsByLevel(body.pointsPrice);
+        // get existing product points
+        const existing = await trx
+          .selectFrom("affiliateProducts")
+          .select(["regularPoints", "salePoints"])
+          .where("id", "=", productId)
+          .executeTakeFirst();
+
+        const existingRegular =
+          jsonMaybe<Record<string, Record<string, number>>>(existing?.regularPoints) ?? {};
+        const existingSale =
+          jsonMaybe<Record<string, Record<string, number>> | null>(existing?.salePoints);
+
+        const currentPoints = mergePointsByLevel(existingRegular, existingSale);
+        const mergedPoints = deepMergePoints(currentPoints, body.pointsPrice as PointsByLvl);
+        const sp = splitPointsByLevel(mergedPoints);
+
         core.regularPoints = sp.regularPoints;
         core.salePoints = sp.salePoints;
       }
+
       if (body.cost) core.cost = body.cost;
       if (body.minLevelId !== undefined) core.minLevelId = body.minLevelId;
 
@@ -284,9 +324,20 @@ export async function PATCH(
       if (body.variations) {
         const existingRows = await trx
           .selectFrom("affiliateProductVariations")
-          .select("id")
+          .select(["id", "regularPoints", "salePoints"])
           .where("productId", "=", productId)
           .execute();
+        const existingById = new Map(
+          existingRows.map((r) => [
+            r.id,
+            {
+              regular:
+                jsonMaybe<Record<string, Record<string, number>>>(r.regularPoints) ?? {},
+              sale:
+                jsonMaybe<Record<string, Record<string, number>> | null>(r.salePoints),
+            },
+          ]),
+        );
         const existingIds = existingRows.map((r) => r.id);
 
         // delete removed variations
@@ -300,11 +351,15 @@ export async function PATCH(
         }
 
         for (const v of body.variations) {
-          const srcMap = v.prices ?? v.pointsPrice;
-          const points =
-            srcMap != null
-              ? splitPointsByLevel(srcMap)
-              : null; // guard: do not overwrite points if not provided
+          const incomingSrc = v.prices ?? v.pointsPrice;
+
+          // merge (if incoming points provided); otherwise keep existing untouched
+          let mergedForVar: PointsByLvl | null = null;
+          if (incomingSrc) {
+            const prev = existingById.get(v.id);
+            const prevMerged = mergePointsByLevel(prev?.regular ?? {}, prev?.sale ?? null);
+            mergedForVar = deepMergePoints(prevMerged, incomingSrc as PointsByLvl);
+          }
 
           const payload: Record<string, unknown> = {
             productId,
@@ -316,18 +371,26 @@ export async function PATCH(
             updatedAt: new Date(),
           };
 
-          if (points) {
-            payload.regularPoints = points.regularPoints;
-            payload.salePoints = points.salePoints;
+          if (mergedForVar) {
+            const sp = splitPointsByLevel(mergedForVar);
+            payload.regularPoints = sp.regularPoints;
+            payload.salePoints = sp.salePoints;
           }
 
-          if (existingIds.includes(v.id)) {
+          if (existingById.has(v.id)) {
             await trx
               .updateTable("affiliateProductVariations")
               .set(payload)
               .where("id", "=", v.id)
               .execute();
           } else {
+            // creating new variation: we still need points (if not provided, start empty)
+            if (!mergedForVar) {
+              mergedForVar = deepMergePoints({}, (incomingSrc || {}) as PointsByLvl);
+              const sp = splitPointsByLevel(mergedForVar);
+              payload.regularPoints = sp.regularPoints;
+              payload.salePoints = sp.salePoints;
+            }
             await trx
               .insertInto("affiliateProductVariations")
               .values({ id: v.id, createdAt: new Date(), ...payload })
