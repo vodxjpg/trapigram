@@ -41,41 +41,68 @@ import { useAffiliateProducts, type AffiliateProduct } from "@/hooks/use-affilia
 
 /** Normalize the different possible shapes of pointsPrice into { regular, sale } for the first available country */
 function pickFirstRegularSale(pointsPrice: unknown): { regular: number; sale: number | null } | null {
-  if (!pointsPrice || typeof pointsPrice !== "object") return null
-  const top = pointsPrice as Record<string, unknown>
-  const topKeys = Object.keys(top)
-  if (!topKeys.length) return null
+  if (!pointsPrice || typeof pointsPrice !== "object") return null;
 
-  // Case A: per-country object  { US: { regular, sale }, AE: {…} }
-  const firstVal = top[topKeys[0]]
-  if (firstVal && typeof firstVal === "object" && "regular" in (firstVal as any)) {
-    const { regular = 0, sale = null } = firstVal as { regular?: number; sale?: number | null }
-    return { regular: Number(regular) || 0, sale: sale == null ? null : Number(sale) }
-  }
+  // normalize to per-country { cc: { regular, sale } }
+  const toNum = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : 0);
+  const byCountry: Record<string, { regular: number; sale: number | null }> = {};
 
-  // Case B: old shape per-country number { US: 120, AE: 90 }
-  if (typeof firstVal === "number") {
-    return { regular: Number(firstVal) || 0, sale: null }
-  }
+  const top = pointsPrice as Record<string, unknown>;
+  const topVals = Object.values(top);
 
-  // Case C: per-level → per-country  { default: { US: { regular, sale }, … }, <levelId>: { … } }
-  const levelMap = (top as any).default ?? top[topKeys[0]]
-  if (levelMap && typeof levelMap === "object") {
-    const lvl = levelMap as Record<string, unknown>
-    const countries = Object.keys(lvl)
-    if (!countries.length) return null
-    const v = lvl[countries[0]]
-    if (v && typeof v === "object" && "regular" in (v as any)) {
-      const { regular = 0, sale = null } = v as { regular?: number; sale?: number | null }
-      return { regular: Number(regular) || 0, sale: sale == null ? null : Number(sale) }
+  const looksPerCountryObj =
+    topVals.length > 0 &&
+    typeof topVals[0] === "object" &&
+    topVals[0] !== null &&
+    "regular" in (topVals[0] as any);
+
+  const looksFlatNumbers = topVals.length > 0 && topVals.every((v) => typeof v === "number");
+
+  if (looksPerCountryObj) {
+    for (const [cc, v] of Object.entries(top)) {
+      const obj = v as any;
+      byCountry[cc] = { regular: toNum(obj.regular), sale: obj.sale == null ? null : toNum(obj.sale) };
     }
-    if (typeof v === "number") {
-      return { regular: Number(v) || 0, sale: null }
+  } else if (looksFlatNumbers) {
+    for (const [cc, v] of Object.entries(top)) {
+      byCountry[cc] = { regular: toNum(v), sale: null };
+    }
+  } else {
+    // assume per-level -> per-country
+    const levelMap = (top as any).default ?? topVals[0];
+    if (levelMap && typeof levelMap === "object") {
+      for (const [cc, v] of Object.entries(levelMap as Record<string, any>)) {
+        if (v && typeof v === "object" && "regular" in v) {
+          byCountry[cc] = { regular: toNum(v.regular), sale: v.sale == null ? null : toNum(v.sale) };
+        } else if (typeof v === "number") {
+          byCountry[cc] = { regular: toNum(v), sale: null };
+        }
+      }
     }
   }
 
-  return null
+  const values = Object.values(byCountry);
+  if (!values.length) return null;
+
+  const saleCandidates = values
+    .map((x) => (typeof x.sale === "number" && x.sale > 0 ? x.sale : null))
+    .filter((x): x is number => x != null);
+  if (saleCandidates.length) {
+    const minSale = Math.min(...saleCandidates);
+    const match = values.find((x) => x.sale === minSale);
+    return { regular: match?.regular ?? minSale, sale: minSale };
+  }
+
+  const regCandidates = values.map((x) => x.regular).filter((r) => r > 0);
+  if (regCandidates.length) {
+    const minReg = Math.min(...regCandidates);
+    return { regular: minReg, sale: null };
+  }
+
+  // all zeros → show first one
+  return values[0];
 }
+
 
 export function AffiliateProductsDataTable() {
   const router = useRouter()

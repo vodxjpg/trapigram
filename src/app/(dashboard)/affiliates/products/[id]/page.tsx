@@ -18,29 +18,44 @@ type NestedPoints =
 
 function normalizePointsPrice(pointsPrice: unknown): NestedPoints | undefined {
   if (!pointsPrice || typeof pointsPrice !== "object" || Array.isArray(pointsPrice)) return undefined;
+  const obj = pointsPrice as Record<string, unknown>;
 
-  const entries = Object.entries(pointsPrice as Record<string, unknown>);
-  if (!entries.every(([, v]) => typeof v === "number")) return undefined;
-
-  const out: NestedPoints = { default: {} };
-  for (const [country, value] of entries) {
-    out.default[country] = { regular: Number(value as number) || 0, sale: null };
+  // Case 1: already nested per-level -> keep as-is
+  const maybeLevel = (obj as any).default ?? Object.values(obj)[0];
+  if (
+    maybeLevel &&
+    typeof maybeLevel === "object" &&
+    Object.values(maybeLevel as Record<string, unknown>).some(
+      (v) => v && typeof v === "object" && "regular" in (v as Record<string, unknown>),
+    )
+  ) {
+    return obj as unknown as NestedPoints;
   }
-  return out;
+
+  // Case 2: flat per-country numbers -> convert to nested default
+  const entries = Object.entries(obj);
+  if (entries.length && entries.every(([, v]) => typeof v === "number")) {
+    const out: NestedPoints = { default: {} };
+    for (const [country, value] of entries) {
+      out.default[country] = { regular: Number(value) || 0, sale: null };
+    }
+    return out;
+  }
+
+  return undefined;
 }
 
 function normalizeInitialData(product: any) {
   if (!product) return undefined;
-
-  const { pointsPrice, ...rest } = product as { pointsPrice?: FlatPoints };
-  const normalized: any = { ...rest };
-
-  // Only attach if we can convert it to the nested structure the form expects
+  const { pointsPrice, ...rest } = product;
   const nested = normalizePointsPrice(pointsPrice);
-  if (nested) normalized.pointsPrice = nested;
-
-  return normalized;
+  return {
+    ...rest,
+    // keep server nested map if normalize didn’t convert anything
+    pointsPrice: nested ?? (pointsPrice as any),
+  };
 }
+
 
 export default function EditAffiliateProductPage() {
   const router = useRouter();
