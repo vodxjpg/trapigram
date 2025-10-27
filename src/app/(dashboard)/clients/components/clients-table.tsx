@@ -17,6 +17,8 @@ import {
   MoreVertical,
   Search,
   Trash2,
+  Plus,
+  Minus,
 } from "lucide-react";
 import Link from "next/link";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -119,7 +121,9 @@ export function ClientsTable() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selected, setSelected] = useState<Client | null>(null);
-  const [delta, setDelta] = useState("");
+  const [delta, setDelta] = useState("");              // amount (non-negative)
+  const [sign, setSign] = useState<"add" | "subtract">("add"); // sign selector
+  const [saving, setSaving] = useState(false);
 
   /* ── helpers ───────────────────────────────────────────────────── */
   const formatDate = (d: string | Date) => {
@@ -216,15 +220,22 @@ export function ClientsTable() {
     if (!canPoints) return;
     setSelected(client);
     setDelta("");
+    setSign("add");
     setDialogOpen(true);
   };
 
   const saveAdjustment = async () => {
-    const val = Number(delta);
-    if (!selected || !Number.isFinite(val) || val === 0) {
-      toast.error("Enter a non-zero integer");
+    // Mobile-friendly: we only accept non-negative input, apply sign from UI
+    const raw = Number(delta);
+    const absInt = Number.isFinite(raw) ? Math.floor(Math.abs(raw)) : NaN;
+
+    if (!selected || !Number.isFinite(absInt) || absInt === 0) {
+      toast.error("Enter a non-zero integer amount");
       return;
     }
+
+    const signed = sign === "subtract" ? -absInt : absInt;
+    setSaving(true);
     try {
       await fetch("/api/affiliate/points", {
         method: "POST",
@@ -235,16 +246,20 @@ export function ClientsTable() {
         },
         body: JSON.stringify({
           id: selected.id,
-          points: val,
-          action: val > 0 ? "MANUAL_ADD" : "MANUAL_SUBTRACT",
+          points: signed,
+          action: signed > 0 ? "MANUAL_ADD" : "MANUAL_SUBTRACT",
           description: "Dashboard manual adjustment",
         }),
       });
       toast.success("Points updated");
       setDialogOpen(false);
+      // Optional: refresh the table in place; keep your redirect behavior:
+      // await fetchClients();
       router.push("/affiliates");
     } catch (err: any) {
-      toast.error(err.message);
+      toast.error(err.message || "Failed to update points");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -358,26 +373,68 @@ export function ClientsTable() {
           <DialogHeader>
             <DialogTitle>Adjust Points</DialogTitle>
           </DialogHeader>
+
           {selected && (
             <>
-              <p>
+              <p className="mb-2">
                 <strong>{selected.username}</strong> current balance:&nbsp;
                 <span className="font-mono">{selected.points}</span>
               </p>
+
+              {/* Sign selector (mobile-friendly) */}
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <Button
+                  type="button"
+                  variant={sign === "add" ? "default" : "outline"}
+                  className="w-full"
+                  onClick={() => setSign("add")}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add
+                </Button>
+                <Button
+                  type="button"
+                  variant={sign === "subtract" ? "destructive" : "outline"}
+                  className="w-full"
+                  onClick={() => setSign("subtract")}
+                >
+                  <Minus className="h-4 w-4 mr-2" />
+                  Subtract
+                </Button>
+              </div>
+
+              {/* Amount (non-negative) */}
               <Input
                 type="number"
-                placeholder="± integer"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                min={0}
+                step={1}
+                placeholder="Amount"
                 value={delta}
                 onChange={(e) => setDelta(e.target.value)}
               />
-              <DialogFooter>
+
+              {/* Effective change preview */}
+              <p className="text-sm text-muted-foreground mt-2">
+                Effective change:&nbsp;
+                <span className={`font-mono ${sign === "subtract" ? "text-destructive" : "text-green-600"}`}>
+                  {sign === "subtract" ? "-" : "+"}
+                  {Math.floor(Math.max(0, Number.isFinite(Number(delta)) ? Math.abs(Number(delta)) : 0))}
+                </span>{" "}
+                pts
+              </p>
+
+              <DialogFooter className="mt-4">
                 <Button
                   variant="secondary"
                   onClick={() => setDialogOpen(false)}
                 >
                   Cancel
                 </Button>
-                <Button onClick={saveAdjustment}>Save</Button>
+                <Button onClick={saveAdjustment} disabled={saving}>
+                  {saving ? "Saving…" : "Save"}
+                </Button>
               </DialogFooter>
             </>
           )}
