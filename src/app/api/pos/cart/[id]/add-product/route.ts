@@ -5,22 +5,20 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import crypto from "crypto";
+import { v4 as uuidv4 } from "uuid";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
-/* ─────────────────────────────────────────────────────────────
-   Tiny TTL cache for base prices (per runtime)
-  ───────────────────────────────────────────────────────────── */
+/* ── tiny TTL price cache ───────────────────────────────────── */
 type PriceKey = `${string}|${string}|${string}|${string}|${string}`; // org|product|variation|null|country|level
 const PRICE_TTL_MS = 60_000;
 const priceCache = new Map<PriceKey, { at: number; price: number; isAffiliate: boolean }>();
-function priceKey(org: string, p: string, v: string | null, c: string, lvl: string): PriceKey {
-  return `${org}|${p}|${v ?? "-"}|${c}|${lvl}` as PriceKey;
-}
+const priceKey = (org: string, p: string, v: string | null, c: string, lvl: string) =>
+  `${org}|${p}|${v ?? "-"}|${c}|${lvl}` as PriceKey;
 
-/* Store country cache (used for price fallback) */
-const STORE_TTL_MS = 5 * 60_000; // 5 min
+/* store country cache (for fallback) */
+const STORE_TTL_MS = 5 * 60_000;
 const storeCountryCache = new Map<string, { at: number; country: string | null }>();
 async function getStoreCountryCached(storeId: string, organizationId: string): Promise<string | null> {
   const now = Date.now();
@@ -41,8 +39,7 @@ async function getStoreCountryCached(storeId: string, organizationId: string): P
   return country;
 }
 
-/* ───────────────────────────────────────────────────────────── */
-
+/* ── helpers ────────────────────────────────────────────────── */
 const BodySchema = z.object({
   productId: z.string(),
   variationId: z.string().nullable().optional(),
@@ -54,14 +51,12 @@ const BASE_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
 };
 
-// channel: "pos-<storeId>-<registerId>"
 function parseStoreIdFromChannel(channel: string | null): string | null {
   if (!channel) return null;
   const m = /^pos-([^-\s]+)-/i.exec(channel);
   return m ? m[1] : null;
 }
 
-/** Optional idempotency wrapper (kept) */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any; headers?: Record<string, string> }>
@@ -77,10 +72,7 @@ async function withIdempotency(
   try {
     await c.query("BEGIN");
     try {
-      await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
-        [key, method, path]
-      );
+      await c.query(`INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`, [key, method, path]);
     } catch (e: any) {
       if (e?.code === "23505") {
         const { rows } = await c.query(`SELECT status, response FROM idempotency WHERE key=$1`, [key]);
@@ -96,10 +88,7 @@ async function withIdempotency(
       throw e;
     }
     const r = await exec();
-    await c.query(
-      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
-    );
+    await c.query(`UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`, [key, r.status, r.body]);
     await c.query("COMMIT");
     return NextResponse.json(r.body, { status: r.status, headers: { ...BASE_HEADERS, ...(r.headers ?? {}) } });
   } catch (err) {
@@ -110,7 +99,7 @@ async function withIdempotency(
   }
 }
 
-/* ───────────────────────────────────────────────────────────── */
+/* ── endpoint ───────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
@@ -141,11 +130,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const levelId: string = (cRows[0].levelId ?? "default") as string;
     const clientId: string = cRows[0].clientId;
 
-    // Store-country fallback for price
+    // Possible store-country fallback
     const storeId = parseStoreIdFromChannel(channel);
     const storeCountry = storeId ? await getStoreCountryCached(storeId, organizationId) : null;
 
-    // Resolve base unit price (TTL cache + store-country fallback)
+    // Resolve base unit price (cached; falls back to store country)
     async function resolveBase(): Promise<{ price: number; isAffiliate: boolean; usedCountry: string }> {
       const k = priceKey(organizationId, body.productId, variationId, country, levelId);
       const now = Date.now();
@@ -171,15 +160,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { price: basePrice, isAffiliate, usedCountry } = await resolveBase();
 
-    // Transaction — Option B (row lock + UPDATE → INSERT)
+    // TX — Option B (row lock, UPDATE then INSERT)
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Serialize concurrent writers for this cart
+      // serialize writers on this cart
       await client.query(`SELECT id FROM carts WHERE id=$1 FOR UPDATE`, [cartId]);
 
-      // Affiliate points debit (if needed) inside the same TX
+      // affiliate points debit (if needed)
       if (isAffiliate) {
         const pointsNeeded = basePrice * body.quantity;
         const { rows: bal } = await client.query(
@@ -194,10 +183,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         await client.query(
           `UPDATE "affiliatePointBalances"
-              SET "pointsCurrent"="pointsCurrent"-$1,
-                  "pointsSpent"  ="pointsSpent"  +$1,
-                  "updatedAt"=NOW()
-            WHERE "organizationId"=$2 AND "clientId"=$3`,
+             SET "pointsCurrent"="pointsCurrent"-$1,
+                 "pointsSpent"  ="pointsSpent"+$1,
+                 "updatedAt"=NOW()
+           WHERE "organizationId"=$2 AND "clientId"=$3`,
           [pointsNeeded, organizationId, clientId],
         );
         await client.query(
@@ -208,7 +197,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         );
       }
 
-      // UPDATE existing line (affiliate vs normal) — variation-aware (NULL-safe)
+      // UPDATE existing line
       const idCol = isAffiliate ? `"affiliateProductId"` : `"productId"`;
       const baseParams: any[] = [body.quantity, basePrice, cartId, body.productId];
 
@@ -230,13 +219,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       let line = upd.rows[0];
       if (!line) {
-        // INSERT new line
+        // INSERT new line — NOTE: explicit id to avoid null id errors
+        const newId = uuidv4();
         const ins = await client.query(
           `INSERT INTO "cartProducts"
-             ("cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-           VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+             (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
            RETURNING id, quantity, "unitPrice","variationId"`,
           [
+            newId,
             cartId,
             isAffiliate ? null : body.productId,
             isAffiliate ? body.productId : null,
@@ -248,10 +239,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         line = ins.rows[0];
       }
 
-      // Adjust stock (should enforce/manage stock inside this call)
+      // adjust stock
       await adjustStock(client, body.productId, variationId, usedCountry, -body.quantity);
 
-      // Recompute cart hash (aggregate) and persist
+      // recompute aggregate + hash (fast single pass)
       const { rows: hv } = await client.query(
         `SELECT COUNT(*)::int AS n,
                 COALESCE(SUM(quantity),0)::int AS q,
@@ -260,26 +251,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           WHERE "cartId"=$1`,
         [cartId]
       );
-      const hash = crypto
-        .createHash("sha256")
-        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
-        .digest("hex");
-
-      await client.query(
-        `UPDATE carts SET "cartUpdatedHash"=$1, "updatedAt"=NOW() WHERE id=$2`,
-        [hash, cartId]
-      );
+      const hash = crypto.createHash("sha256").update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`).digest("hex");
+      await client.query(`UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`, [hash, cartId]);
 
       await client.query("COMMIT");
 
-      // Fire-and-forget display emit
-      try {
-        setTimeout(() => {
-          emitCartToDisplay(cartId).catch(() => {});
-        }, 0);
-      } catch {}
+      // non-blocking display emit
+      try { setTimeout(() => { emitCartToDisplay(cartId).catch(() => {}); }, 0); } catch {}
 
-      // Build totals from the aggregate we already computed
       const totals = {
         lineCount: Number(hv[0].n),
         quantity: Number(hv[0].q),
@@ -358,7 +337,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         };
       }
 
-      // Fast minimal payload
       return {
         status: 201,
         body: {
@@ -380,7 +358,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
       }
-      console.error("[POS POST /pos/cart/:id/add-product][optB]", err);
+      console.error("[POS POST /pos/cart/:id/add-product][optB-idfix]", err);
       return { status: 500, body: { error: "Internal server error" }, headers: BASE_HEADERS };
     } finally {
       try { client.release(); } catch {}
