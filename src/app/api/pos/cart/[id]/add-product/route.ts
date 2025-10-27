@@ -15,10 +15,11 @@ import { emitCartToDisplay } from "@/lib/customer-display-emit";
 type PriceKey = `${string}|${string}|${string}|${string}|${string}`; // org|product|variation|null|country|level
 const PRICE_TTL_MS = 60_000;
 const priceCache = new Map<PriceKey, { at: number; price: number; isAffiliate: boolean }>();
-function priceKey(org: string, p: string, v: string|null, c: string, lvl: string): PriceKey {
+function priceKey(org: string, p: string, v: string | null, c: string, lvl: string): PriceKey {
   return `${org}|${p}|${v ?? "-"}|${c}|${lvl}` as PriceKey;
 }
 
+/* Store country cache (used for price fallback) */
 const STORE_TTL_MS = 5 * 60_000; // 5 min
 const storeCountryCache = new Map<string, { at: number; country: string | null }>();
 async function getStoreCountryCached(storeId: string, organizationId: string): Promise<string | null> {
@@ -40,6 +41,8 @@ async function getStoreCountryCached(storeId: string, organizationId: string): P
   return country;
 }
 
+/* ───────────────────────────────────────────────────────────── */
+
 const BodySchema = z.object({
   productId: z.string(),
   variationId: z.string().nullable().optional(),
@@ -58,10 +61,10 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   return m ? m[1] : null;
 }
 
-/** Optional idempotency (kept from your original). For pure POS you can drop this. */
+/** Optional idempotency wrapper (kept) */
 async function withIdempotency(
   req: NextRequest,
-  exec: () => Promise<{ status: number; body: any; headers?: Record<string,string> }>
+  exec: () => Promise<{ status: number; body: any; headers?: Record<string, string> }>
 ): Promise<NextResponse> {
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
@@ -100,8 +103,11 @@ async function withIdempotency(
     await c.query("COMMIT");
     return NextResponse.json(r.body, { status: r.status, headers: { ...BASE_HEADERS, ...(r.headers ?? {}) } });
   } catch (err) {
-    await c.query("ROLLBACK"); throw err;
-  } finally { c.release(); }
+    await c.query("ROLLBACK");
+    throw err;
+  } finally {
+    c.release();
+  }
 }
 
 /* ───────────────────────────────────────────────────────────── */
@@ -111,13 +117,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (ctx instanceof NextResponse) return ctx;
 
   return withIdempotency(req, async () => {
-    const t0 = Date.now();
     const { organizationId } = ctx as { organizationId: string };
     const { id: cartId } = await params;
     const url = new URL(req.url);
     const wantSnapshot = url.searchParams.get("snapshot") === "1";
 
-    // Parse
+    // Parse input
     const body = BodySchema.parse(await req.json());
     const variationId = body.variationId && body.variationId.trim() ? body.variationId : null;
 
@@ -136,25 +141,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const levelId: string = (cRows[0].levelId ?? "default") as string;
     const clientId: string = cRows[0].clientId;
 
-    // Fallback to store country if needed
+    // Store-country fallback for price
     const storeId = parseStoreIdFromChannel(channel);
     const storeCountry = storeId ? await getStoreCountryCached(storeId, organizationId) : null;
 
-    // Resolve base price (with tiny TTL cache)
+    // Resolve base unit price (TTL cache + store-country fallback)
     async function resolveBase(): Promise<{ price: number; isAffiliate: boolean; usedCountry: string }> {
-      const key = priceKey(organizationId, body.productId, variationId, country, levelId);
-      const hit = priceCache.get(key);
+      const k = priceKey(organizationId, body.productId, variationId, country, levelId);
       const now = Date.now();
-      if (hit && now - hit.at < PRICE_TTL_MS) return { price: hit.price, isAffiliate: hit.isAffiliate, usedCountry: country };
-
+      const hit = priceCache.get(k);
+      if (hit && now - hit.at < PRICE_TTL_MS) {
+        return { price: hit.price, isAffiliate: hit.isAffiliate, usedCountry: country };
+      }
       try {
         const r = await resolveUnitPrice(body.productId, variationId, country, levelId);
-        priceCache.set(key, { at: now, price: r.price, isAffiliate: r.isAffiliate });
+        priceCache.set(k, { at: now, price: r.price, isAffiliate: r.isAffiliate });
         return { price: r.price, isAffiliate: r.isAffiliate, usedCountry: country };
       } catch (e) {
         if (storeCountry && storeCountry !== country) {
           const r2 = await resolveUnitPrice(body.productId, variationId, storeCountry, levelId);
-          // Persist effective country for this cart so later calls are consistent
           await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [storeCountry, cartId]);
           const k2 = priceKey(organizationId, body.productId, variationId, storeCountry, levelId);
           priceCache.set(k2, { at: now, price: r2.price, isAffiliate: r2.isAffiliate });
@@ -166,12 +171,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { price: basePrice, isAffiliate, usedCountry } = await resolveBase();
 
-    // TX
+    // Transaction — Option B (row lock + UPDATE → INSERT)
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Affiliate points debit (kept as-is)
+      // Serialize concurrent writers for this cart
+      await client.query(`SELECT id FROM carts WHERE id=$1 FOR UPDATE`, [cartId]);
+
+      // Affiliate points debit (if needed) inside the same TX
       if (isAffiliate) {
         const pointsNeeded = basePrice * body.quantity;
         const { rows: bal } = await client.query(
@@ -200,66 +208,85 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         );
       }
 
-      // Single UPSERT (no pre-read). Requires the two unique indexes above.
-      const upsertSql = `
-        INSERT INTO "cartProducts"
-          ("cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-        VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
-        ON CONFLICT ON CONSTRAINT ${isAffiliate ? "cartprod_uq_aff" : "cartprod_uq_normal"}
-        DO UPDATE SET
-          quantity   = "cartProducts".quantity + EXCLUDED.quantity,
-          "unitPrice"= EXCLUDED."unitPrice",
-          "updatedAt"= NOW()
-        RETURNING id, quantity, "unitPrice","variationId"
-      `;
-      const { rows: up } = await client.query(upsertSql, [
-        cartId,
-        isAffiliate ? null : body.productId,
-        isAffiliate ? body.productId : null,
-        variationId,
-        body.quantity,
-        basePrice
-      ]);
-      const line = up[0];
+      // UPDATE existing line (affiliate vs normal) — variation-aware (NULL-safe)
+      const idCol = isAffiliate ? `"affiliateProductId"` : `"productId"`;
+      const baseParams: any[] = [body.quantity, basePrice, cartId, body.productId];
 
-      // Stock adjust (make your adjustStock atomic to remove any pre-checks elsewhere)
+      let updateSql = `
+        UPDATE "cartProducts"
+           SET quantity = quantity + $1,
+               "unitPrice" = $2,
+               "updatedAt" = NOW()
+         WHERE "cartId" = $3
+           AND ${idCol} = $4
+      `;
+      if (variationId) {
+        updateSql += ` AND "variationId" = $5 RETURNING id, quantity, "unitPrice","variationId"`;
+      } else {
+        updateSql += ` AND "variationId" IS NULL RETURNING id, quantity, "unitPrice","variationId"`;
+      }
+
+      const upd = await client.query(updateSql, variationId ? [...baseParams, variationId] : baseParams);
+
+      let line = upd.rows[0];
+      if (!line) {
+        // INSERT new line
+        const ins = await client.query(
+          `INSERT INTO "cartProducts"
+             ("cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+           RETURNING id, quantity, "unitPrice","variationId"`,
+          [
+            cartId,
+            isAffiliate ? null : body.productId,
+            isAffiliate ? body.productId : null,
+            variationId,
+            body.quantity,
+            basePrice,
+          ]
+        );
+        line = ins.rows[0];
+      }
+
+      // Adjust stock (should enforce/manage stock inside this call)
       await adjustStock(client, body.productId, variationId, usedCountry, -body.quantity);
+
+      // Recompute cart hash (aggregate) and persist
+      const { rows: hv } = await client.query(
+        `SELECT COUNT(*)::int AS n,
+                COALESCE(SUM(quantity),0)::int AS q,
+                COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
+           FROM "cartProducts"
+          WHERE "cartId"=$1`,
+        [cartId]
+      );
+      const hash = crypto
+        .createHash("sha256")
+        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
+        .digest("hex");
+
+      await client.query(
+        `UPDATE carts SET "cartUpdatedHash"=$1, "updatedAt"=NOW() WHERE id=$2`,
+        [hash, cartId]
+      );
 
       await client.query("COMMIT");
 
-      // Emit to paired customer display (fire-and-forget)
-      try { setTimeout(() => { emitCartToDisplay(cartId).catch(() => {}); }, 0); } catch {}
-
-      // Totals/hash: read fast counters if present; fallback to aggregate if migration not applied yet.
-      let totals: { lineCount: number; quantity: number; value: number; cartHash: string };
+      // Fire-and-forget display emit
       try {
-        const { rows: one } = await pool.query(
-          `SELECT line_count, qty_sum, val_sum, "cartUpdatedHash" FROM carts WHERE id = $1`,
-          [cartId]
-        );
-        totals = {
-          lineCount: Number(one[0].line_count ?? 0),
-          quantity: Number(one[0].qty_sum ?? 0),
-          value: Number(one[0].val_sum ?? 0),
-          cartHash: String(one[0].cartUpdatedHash ?? "")
-        };
-      } catch (e: any) {
-        // Columns not there yet → fallback once (slower)
-        const { rows: hv } = await pool.query(
-          `SELECT COUNT(*)::int AS n,
-                  COALESCE(SUM(quantity),0)::int AS q,
-                  COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
-             FROM "cartProducts"
-            WHERE "cartId"=$1`,
-          [cartId]
-        );
-        const cartHash = crypto.createHash("sha256")
-          .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
-          .digest("hex");
-        totals = { lineCount: hv[0].n, quantity: hv[0].q, value: Number(hv[0].v), cartHash };
-      }
+        setTimeout(() => {
+          emitCartToDisplay(cartId).catch(() => {});
+        }, 0);
+      } catch {}
 
-      // Optional: heavy snapshot for UI (opt-in)
+      // Build totals from the aggregate we already computed
+      const totals = {
+        lineCount: Number(hv[0].n),
+        quantity: Number(hv[0].q),
+        value: Number(hv[0].v),
+        cartHash: hash,
+      };
+
       if (wantSnapshot) {
         const { rows: snap } = await pool.query(
           `SELECT 
@@ -312,12 +339,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               isAffiliate,
               unitPrice: Number(line.unitPrice),
               deltaQuantity: body.quantity,
-              newQuantity: Number(line.quantity)
+              newQuantity: Number(line.quantity),
             },
             totals,
             lines: snap.map((r: any) => ({
               id: r.pid,
-              title: r.isAffiliate ? r.parent_title : r.parent_title, // keep as-is; UI already formats
+              title: r.parent_title,
               image: r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null),
               sku: r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null),
               quantity: Number(r.quantity),
@@ -325,13 +352,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               variationId: r.variationId,
               isAffiliate: r.isAffiliate,
               subtotal: Number(r.unitPrice) * Number(r.quantity),
-            }))
+            })),
           },
-          headers: BASE_HEADERS
+          headers: BASE_HEADERS,
         };
       }
 
-      // Fast (default) minimal payload: delta + totals
+      // Fast minimal payload
       return {
         status: 201,
         body: {
@@ -341,20 +368,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             isAffiliate,
             unitPrice: Number(line.unitPrice),
             deltaQuantity: body.quantity,
-            newQuantity: Number(line.quantity)
+            newQuantity: Number(line.quantity),
           },
-          totals
+          totals,
         },
-        headers: BASE_HEADERS
+        headers: BASE_HEADERS,
       };
     } catch (err: any) {
       try { await client.query("ROLLBACK"); } catch {}
-      if (err?.code === "23505") return { status: 409, body: { error: "Conflict" }, headers: BASE_HEADERS };
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
       }
-      console.error("[POS POST /pos/cart/:id/add-product][fast]", err);
+      console.error("[POS POST /pos/cart/:id/add-product][optB]", err);
       return { status: 500, body: { error: "Internal server error" }, headers: BASE_HEADERS };
     } finally {
       try { client.release(); } catch {}
