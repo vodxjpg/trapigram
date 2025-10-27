@@ -7,6 +7,19 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
 
+/* Safe JSON parser: accepts object, stringified JSON, null/undefined */
+function jsonMaybe<T>(val: unknown): T | null {
+  if (val == null) return null;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val) as T;
+    } catch {
+      return null;
+    }
+  }
+  return val as T;
+}
+
 const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const countryMap = z.record(z.string(), ptsObj);
 const pointsByLvl = z.record(z.string(), countryMap);
@@ -78,20 +91,18 @@ async function uniqueSku(base: string, orgId: string) {
 
 /*==================================================================
   GET   – fixed “IN ()” syntax error when there are no products
+         + robust JSON parsing for points/cost
   =================================================================*/
 export async function GET(req: NextRequest) {
-  /* 1) resolve auth/context ------------------------------------------------ */
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, tenantId } = ctx;
 
-  /* 2) pagination + search ------------------------------------------------- */
   const { searchParams } = new URL(req.url);
   const limit = Number(searchParams.get("limit") || "50");
   const offset = Number(searchParams.get("offset") || "0");
   const search = searchParams.get("search") || "";
 
-  /* 3) base product rows --------------------------------------------------- */
   const rows = await db
     .selectFrom("affiliateProducts")
     .select([
@@ -113,53 +124,52 @@ export async function GET(req: NextRequest) {
     .offset(offset)
     .execute();
 
-  /* 4) warehouse stock – only query if we actually have product IDs -------- */
   const ids = rows.map((r) => r.id);
-  let stockRows: {
-    affiliateProductId: string;
-    warehouseId: string;
-    country: string;
-    quantity: number;
-  }[] = [];
+  let stockRows:
+    | {
+        affiliateProductId: string;
+        warehouseId: string;
+        country: string;
+        quantity: number;
+      }[]
+    | [] = [];
 
   if (ids.length) {
     stockRows = await db
       .selectFrom("warehouseStock")
-      .select([
-        "affiliateProductId",
-        "warehouseId",
-        "country",
-        "quantity",
-      ])
+      .select(["affiliateProductId", "warehouseId", "country", "quantity"])
       .where("affiliateProductId", "in", ids)
       .execute();
   }
 
-  /* 5) build nested stock map --------------------------------------------- */
-  const stockMap: Record<string, Record<string, Record<string, number>>> = {};
+  const byProductStock: Record<string, Record<string, Record<string, number>>> = {};
   for (const { affiliateProductId, warehouseId, country, quantity } of stockRows) {
-    stockMap[affiliateProductId] ??= {};
-    stockMap[affiliateProductId][warehouseId] ??= {};
-    stockMap[affiliateProductId][warehouseId][country] = quantity;
+    byProductStock[affiliateProductId] ??= {};
+    byProductStock[affiliateProductId][warehouseId] ??= {};
+    byProductStock[affiliateProductId][warehouseId][country] = quantity;
   }
 
-  /* 6) stitch & respond ---------------------------------------------------- */
-  const products = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    image: r.image,
-    sku: r.sku,
-    status: r.status,
-    productType: r.productType,
-    pointsPrice: mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
-    cost: r.cost,
-    stock: stockMap[r.id] ?? {},
-    createdAt: r.createdAt,
-  }));
+  const products = rows.map((r) => {
+    const regular = jsonMaybe<Record<string, Record<string, number>>>(r.regularPoints) ?? {};
+    const sale = jsonMaybe<Record<string, Record<string, number>> | null>(r.salePoints);
+    const cost = jsonMaybe<Record<string, number>>(r.cost) ?? {};
+
+    return {
+      id: r.id,
+      title: r.title,
+      image: r.image,
+      sku: r.sku,
+      status: r.status,
+      productType: r.productType,
+      pointsPrice: mergePointsByLevel(regular, sale),
+      cost,
+      stock: byProductStock[r.id] ?? {},
+      createdAt: r.createdAt,
+    };
+  });
 
   return NextResponse.json({ products });
 }
-
 
 /*==================================================================
   POST
@@ -173,8 +183,9 @@ export async function POST(req: NextRequest) {
   try {
     body = productSchema.parse(await req.json());
   } catch (err) {
-    if (err instanceof z.ZodError)
+    if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
+    }
     throw err;
   }
 
@@ -188,7 +199,7 @@ export async function POST(req: NextRequest) {
     .values({
       id: productId,
       organizationId,
-      tenantId,                       /* FIX */
+      tenantId, /* FIX */
       title: body.title,
       description: body.description ?? null,
       image: body.image ?? null,
@@ -209,15 +220,17 @@ export async function POST(req: NextRequest) {
 
   /* attribute values */
   if (body.attributes?.length) {
-    for (const a of body.attributes)
-      for (const termId of a.selectedTerms)
+    for (const a of body.attributes) {
+      for (const termId of a.selectedTerms) {
         await db
           .insertInto("productAttributeValues")
           .values({ productId, attributeId: a.id, termId })
           .execute();
+      }
+    }
   }
 
-  /* variations … (unchanged logic) */
+  /* variations */
   const variationStockRows: {
     warehouseId: string;
     affiliateProductId: string;
@@ -249,9 +262,9 @@ export async function POST(req: NextRequest) {
         .execute();
 
       if (v.stock) {
-        for (const [wId, byCountry] of Object.entries(v.stock))
-          for (const [country, qty] of Object.entries(byCountry))
-            if (qty > 0)
+        for (const [wId, byCountry] of Object.entries(v.stock)) {
+          for (const [country, qty] of Object.entries(byCountry)) {
+            if (qty > 0) {
               variationStockRows.push({
                 warehouseId: wId,
                 affiliateProductId: productId,
@@ -259,6 +272,9 @@ export async function POST(req: NextRequest) {
                 country,
                 quantity: qty,
               });
+            }
+          }
+        }
       }
     }
   }
@@ -281,7 +297,7 @@ export async function POST(req: NextRequest) {
         country: row.country,
         quantity: row.quantity,
         organizationId,
-        tenantId,                       /* FIX */
+        tenantId, /* FIX */
         createdAt: new Date(),
         updatedAt: new Date(),
       })

@@ -1,5 +1,5 @@
 // ==================================================================
-//  src/app/api/affiliate/products/[id]/route.ts  – NEXT 16 FIXED
+//  src/app/api/affiliate/products/[id]/route.ts
 // ==================================================================
 export const runtime = "nodejs";
 
@@ -11,6 +11,19 @@ import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
 
+/* Safe JSON parser: accepts object, stringified JSON, null/undefined */
+function jsonMaybe<T>(val: unknown): T | null {
+  if (val == null) return null;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val) as T;
+    } catch {
+      return null;
+    }
+  }
+  return val as T;
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
@@ -18,8 +31,8 @@ const ptsObj = z.object({
   regular: z.number().min(0),
   sale: z.number().nullable(),
 });
-const countryMap = z.record(z.string(), ptsObj);         // country ➜ points
-const pointsByLvl = z.record(z.string(), countryMap);    // levelId ➜ country map
+const countryMap = z.record(z.string(), ptsObj); // country ➜ points
+const pointsByLvl = z.record(z.string(), countryMap); // levelId ➜ country map
 
 const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 const costMap = z.record(z.string(), z.number().min(0));
@@ -37,7 +50,6 @@ const variationPatch = z
     cost: costMap.optional(),
     minLevelId: z.string().uuid().nullable().optional(),
   })
-  // accept either `prices` or `pointsPrice`
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
 
 const attrInput = z.object({
@@ -158,29 +170,35 @@ export async function GET(
   }));
 
   const mappedVariations = variations.map((v) => {
-    const pointsPrice = mergePointsByLevel(
-      v.regularPoints as Record<string, Record<string, number>>,
-      v.salePoints as Record<string, Record<string, number>> | null,
-    );
+    const vRegular = jsonMaybe<Record<string, Record<string, number>>>(v.regularPoints) ?? {};
+    const vSale = jsonMaybe<Record<string, Record<string, number>> | null>(v.salePoints);
+    const vCost = jsonMaybe<Record<string, number>>(v.cost) ?? {};
+    const vAttrs = typeof v.attributes === "string" ? jsonMaybe<Record<string, string>>(v.attributes) ?? {} : (v.attributes as any);
+
+    const pointsPrice = mergePointsByLevel(vRegular, vSale);
 
     return {
       id: v.id,
-      attributes: v.attributes,
+      attributes: vAttrs,
       sku: v.sku,
       image: v.image,
       prices: pointsPrice,
       pointsPrice,
-      cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
+      cost: vCost,
       minLevelId: v.minLevelId ?? null,
       stock: variationStock[v.id] || {},
     };
   });
 
+  const pRegular = jsonMaybe<Record<string, Record<string, number>>>(product.regularPoints) ?? {};
+  const pSale = jsonMaybe<Record<string, Record<string, number>> | null>(product.salePoints);
+  const pCost = jsonMaybe<Record<string, number>>(product.cost) ?? {};
+
   return NextResponse.json({
     product: {
       ...product,
-      pointsPrice: mergePointsByLevel(product.regularPoints, product.salePoints),
-      cost: typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost ?? {},
+      pointsPrice: mergePointsByLevel(pRegular, pSale),
+      cost: pCost,
       warehouseStock: stockRows.filter((r) => !r.affiliateVariationId),
       variations: mappedVariations,
       attributes: attributesOut,
@@ -283,19 +301,25 @@ export async function PATCH(
 
         for (const v of body.variations) {
           const srcMap = v.prices ?? v.pointsPrice;
-          const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
+          const points =
+            srcMap != null
+              ? splitPointsByLevel(srcMap)
+              : null; // guard: do not overwrite points if not provided
 
-          const payload = {
+          const payload: Record<string, unknown> = {
             productId,
             attributes: JSON.stringify(v.attributes),
             sku: v.sku,
             image: v.image ?? null,
-            regularPoints,
-            salePoints,
             cost: v.cost ?? {},
             minLevelId: v.minLevelId ?? null,
             updatedAt: new Date(),
           };
+
+          if (points) {
+            payload.regularPoints = points.regularPoints;
+            payload.salePoints = points.salePoints;
+          }
 
           if (existingIds.includes(v.id)) {
             await trx
