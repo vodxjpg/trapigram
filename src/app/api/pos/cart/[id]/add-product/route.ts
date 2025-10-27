@@ -1,117 +1,71 @@
-export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import crypto from "crypto";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { v4 as uuidv4 } from "uuid";
-import crypto from "crypto";
-import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
-import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
+import { resolveUnitPrice } from "@/lib/pricing";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
-/* ─────────────────────────────────────────────────────────────
-   Fast, in-memory idempotency (per-warm runtime)
-   - Avoids BEGIN/INSERT/UPDATE on every POS add
-   - TTL keeps memory bounded
-  ───────────────────────────────────────────────────────────── */
-const IDEM_TTL_MS = 2 * 60_000; // 2 minutes
-type IdemEntry = { at: number; status: number; body: any; headers?: Record<string, string> };
-const idemCache = new Map<string, IdemEntry>();
-const now = () => Date.now();
-
-function gcIdem() {
-  const t = now();
-  for (const [k, v] of idemCache) {
-    if (t - v.at > IDEM_TTL_MS) idemCache.delete(k);
-  }
-}
-
+/* ───────────────────────────────────────────────────────────── */
+/** Idempotency helper aligned with update-product */
 async function withIdempotency(
   req: NextRequest,
-  exec: () => Promise<ExecResult>
+  exec: () => Promise<{ status: number; body: any } | NextResponse>
 ): Promise<NextResponse> {
-  // Optional escape hatch to force DB idempotency for debugging:
-  // if (req.headers.get("X-Force-DB-Idem") === "1") { ... old implementation ... }
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
     const r = await exec();
-    return NextResponse.json(r.body, {
-      status: r.status,
-      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-    });
+    return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
   }
-
-  gcIdem();
-  const hit = idemCache.get(key);
-  if (hit && now() - hit.at <= IDEM_TTL_MS) {
-    return NextResponse.json(hit.body, {
-      status: hit.status,
-      headers: { ...BASE_HEADERS, ...(hit.headers ?? {}) },
-    });
-  }
-
-  const r = await exec();
-  idemCache.set(key, { at: now(), status: r.status, body: r.body, headers: r.headers });
-  return NextResponse.json(r.body, {
-    status: r.status,
-    headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-  });
-}
-
-/* ─────────────────────────────────────────────────────────────
-   Small in-memory caches (per runtime)
-  ───────────────────────────────────────────────────────────── */
-const TIER_TTL_MS = 120_000;      // 2 min – good for POS, lowers repeated tier calls
-const STORE_TTL_MS = 5 * 60_000;  // 5 min
-
-const tierCache = new Map<string, { at: number; data: Tier[] }>();
-async function getTiersCached(orgId: string): Promise<Tier[]> {
-  const t = now();
-  const hit = tierCache.get(orgId);
-  if (hit && t - hit.at < TIER_TTL_MS) return hit.data;
-  const data = (await tierPricing(orgId)) as Tier[];
-  tierCache.set(orgId, { at: t, data });
-  return data;
-}
-
-const storeCountryCache = new Map<string, { at: number; country: string | null }>();
-async function getStoreCountryCached(storeId: string, organizationId: string): Promise<string | null> {
-  const t = now();
-  const key = `${organizationId}:${storeId}`;
-  const hit = storeCountryCache.get(key);
-  if (hit && t - hit.at < STORE_TTL_MS) return hit.country;
-
-  const { rows } = await pool.query(
-    `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-    [storeId, organizationId],
-  );
-  let country: string | null = null;
+  const method = req.method;
+  const path = new URL(req.url).pathname;
+  const c = await pool.connect();
   try {
-    const addr = typeof rows[0]?.address === "string" ? JSON.parse(rows[0].address) : rows[0]?.address;
-    if (addr?.country && typeof addr.country === "string") country = String(addr.country).toUpperCase();
-  } catch { /* noop */ }
-
-  storeCountryCache.set(key, { at: t, country });
-  return country;
+    await c.query("BEGIN");
+    try {
+      await c.query(
+        `INSERT INTO idempotency(key, method, path, "createdAt")
+         VALUES ($1,$2,$3,NOW())`,
+        [key, method, path]
+      );
+    } catch (e: any) {
+      if (e?.code === "23505") {
+        const { rows } = await c.query(
+          `SELECT status, response FROM idempotency WHERE key=$1`,
+          [key]
+        );
+        await c.query("COMMIT");
+        if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
+        return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
+      }
+      if (e?.code === "42P01") {
+        await c.query("ROLLBACK");
+        const r = await exec();
+        return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
+      }
+      throw e;
+    }
+    const r = await exec();
+    await c.query(
+      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
+      [key, r instanceof NextResponse ? r.status : r.status, r instanceof NextResponse ? await r.json().catch(() => ({})) : r.body]
+    );
+    await c.query("COMMIT");
+    return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
+  } catch (err) {
+    await c.query("ROLLBACK");
+    throw err;
+  } finally {
+    c.release();
+  }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Helpers
-  ───────────────────────────────────────────────────────────── */
-
-type ExecResult = { status: number; body: any; headers?: Record<string, string> };
-
-const BASE_HEADERS: Record<string, string> = {
-  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-  "X-Content-Type-Options": "nosniff",
-};
+/* ───────────────────────────────────────────────────────────── */
 
 const BodySchema = z.object({
-  productId: z.string(),
+  productId: z.string(),               // may be a normal product id or an affiliateProduct id
   variationId: z.string().nullable().optional(),
-  quantity: z.number().int().positive(),
 });
 
 function parseStoreIdFromChannel(channel: string | null): string | null {
@@ -120,69 +74,55 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   return m ? m[1] : null;
 }
 
-function pickTierForClient(
-  tiers: Tier[],
-  country: string,
-  productId: string,
-  variationId: string | null,
-  clientId?: string | null,
-): Tier | null {
-  const CC = (country || "").toUpperCase();
-  const inTier = (t: Tier) =>
-    t.active === true &&
-    t.countries.some((c) => (c || "").toUpperCase() === CC) &&
-    t.products.some(
-      (p) =>
-        (p.productId && p.productId === productId) ||
-        (!!variationId && p.variationId === variationId),
-    );
-  const candidates = tiers.filter(inTier);
-  if (!candidates.length) return null;
-
-  const targets = (t: Tier): string[] =>
-    ((((t as any).clients as string[] | undefined) ??
-      ((t as any).customers as string[] | undefined) ??
-      []) as string[]).filter(Boolean);
-
-  if (clientId) {
-    const targeted = candidates.find((t) => targets(t).includes(clientId));
-    if (targeted) return targeted;
-  }
-  const global = candidates.find((t) => targets(t).length === 0);
-  return global ?? null;
-}
-
-/** Inventory check (schema-aware).
- *  productVariations has no stock flags → only read products row.
- */
+/** Inventory reader aligned with update-product */
 async function readInventoryFast(
   client: any,
   productId: string,
+  variationId: string | null
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  const { rows } = await client.query(
-    `SELECT COALESCE("manageStock", false) AS manage,
-            COALESCE("allowBackorders", false) AS backorder
-       FROM products
-      WHERE id=$1
-      LIMIT 1`,
-    [productId],
-  );
-  return {
-    manage: !!rows?.[0]?.manage,
-    backorder: !!rows?.[0]?.backorder,
-    stock: null,
+  const safeQuery = async (sql: string, params: any[], sp: string) => {
+    await client.query(`SAVEPOINT ${sp}`);
+    try { const r = await client.query(sql, params); await client.query(`RELEASE SAVEPOINT ${sp}`); return r; }
+    catch (e: any) { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); if (e?.code === "42703" || e?.code === "42P01") return { rows: [] }; throw e; }
   };
+
+  const p = await safeQuery(
+    `SELECT COALESCE("manageStock",false) AS manage,
+            COALESCE("allowBackorders",false) AS backorder
+       FROM products WHERE id=$1 LIMIT 1`,
+    [productId],
+    "inv_p",
+  );
+
+  let manage = !!p.rows?.[0]?.manage;
+  let backorder = !!p.rows?.[0]?.backorder;
+  let stock: number | null = null;
+
+  if (variationId) {
+    const v = await safeQuery(
+      `SELECT COALESCE("manageStock",false) AS manage,
+              COALESCE("allowBackorders",false) AS backorder,
+              NULL::int AS stock
+         FROM "productVariations" WHERE id=$1 LIMIT 1`,
+      [variationId],
+      "inv_v",
+    );
+    if (v.rows?.[0]) {
+      manage = !!v.rows[0].manage || manage;
+      if (v.rows[0].backorder != null) backorder = !!v.rows[0].backorder;
+    }
+  }
+  return { manage, backorder, stock };
 }
 
-/* Variant-title helpers (tolerant of many shapes & filters UUID-looking strings) */
+/* Variant title helpers (same as update-product) */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 function readLabelish(x: any): string | null {
   if (x == null) return null;
   if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
   if (typeof x === "number" || typeof x === "boolean") return String(x);
   if (typeof x === "object") {
-    const keys = ["optionName","valueName","label","name","title","value","text"];
+    const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
     for (const k of keys) {
       if (x[k] != null) {
         const v = readLabelish(x[k]);
@@ -192,11 +132,9 @@ function readLabelish(x: any): string | null {
   }
   return null;
 }
-
 function labelsFromAttributes(attrs: any): string[] {
   const out: string[] = [];
   const push = (v: string | null) => { if (v && !UUID_RE.test(v)) out.push(v); };
-
   try {
     if (Array.isArray(attrs)) {
       for (const it of attrs) {
@@ -205,7 +143,6 @@ function labelsFromAttributes(attrs: any): string[] {
       }
       return [...new Set(out)];
     }
-
     if (attrs && typeof attrs === "object") {
       for (const [k, v] of Object.entries(attrs)) {
         const val = readLabelish((v as any)?.value) ?? readLabelish((v as any)?.optionName) ?? readLabelish(v);
@@ -216,32 +153,13 @@ function labelsFromAttributes(attrs: any): string[] {
       }
       return [...new Set(out)];
     }
-
     push(readLabelish(attrs));
     return [...new Set(out)];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
-
 function formatVariationTitle(parentTitle: string, attributes: any): string {
   const labels = labelsFromAttributes(attributes);
   return labels.length ? `${parentTitle} - ${labels.join(" / ")}` : parentTitle;
-}
-
-/** Swallow emitter timeouts & errors, never block request */
-function withTimeout<T>(p: Promise<T>, ms: number) {
-  return Promise.race([
-    p,
-    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("emit-timeout")), ms)),
-  ]);
-}
-function fireAndForget(p: Promise<any>) {
-  p.catch(() => {}); // silence
-}
-
-function encodeServerTiming(marks: Array<[string, number]>): string {
-  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 }
 
 /* ───────────────────────────────────────────────────────────── */
@@ -250,341 +168,356 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  return withIdempotency(req, async (): Promise<ExecResult> => {
-    const T0 = Date.now();
-    const marks: Array<[string, number]> = [];
-    const mark = (label: string) => marks.push([label, Date.now() - T0]);
+  const T0 = Date.now();
+  const marks: Array<[string, number]> = [];
+  const mark = (label: string) => marks.push([label, Date.now() - T0]);
 
-    let client: any | null = null;
-
+  return withIdempotency(req, async () => {
     try {
       const { id: cartId } = await params;
-      const body = BodySchema.parse(await req.json());
+
+      // Parse body or query
+      let parsed: z.infer<typeof BodySchema>;
+      try {
+        const body = await req.json().catch(() => ({} as any));
+        parsed = BodySchema.parse(body);
+      } catch {
+        const url = new URL(req.url);
+        parsed = BodySchema.parse({
+          productId: url.searchParams.get("productId"),
+          variationId: url.searchParams.get("variationId"),
+        } as any);
+      }
       mark("parsed_body");
 
       const variationId =
-        typeof body.variationId === "string" && body.variationId.trim().length > 0
-          ? body.variationId
+        typeof parsed.variationId === "string" && parsed.variationId.trim().length > 0
+          ? parsed.variationId
           : null;
 
-      // cart + client context
-      const { rows: cRows } = await pool.query(
-        `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
-           FROM carts ca
-           JOIN clients cl ON cl.id = ca."clientId"
-          WHERE ca.id = $1`,
-        [cartId]
-      );
-      mark("cart_lookup");
-      if (!cRows.length) {
-        return { status: 404, body: { error: "Cart or client not found" }, headers: { "Server-Timing": encodeServerTiming(marks) } };
-      }
-
-      const organizationId: string = (ctx as any).organizationId;
-      let country: string = cRows[0].country;
-      const channel: string | null = cRows[0].channel ?? null;
-      const levelId: string | null = cRows[0].levelId ?? null;
-      const clientId: string = cRows[0].clientId;
-
-      // store country (cached)
-      let storeCountry: string | null = null;
-      const storeId = parseStoreIdFromChannel(channel);
-      if (storeId) {
-        storeCountry = await getStoreCountryCached(storeId, organizationId);
-        mark("store_lookup");
-      }
-
-      // resolve base price (+ affiliate flag)
-      let basePrice: number, isAffiliate: boolean;
+      const dbc = await pool.connect();
       try {
-        const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
-        basePrice = r.price; isAffiliate = r.isAffiliate;
-        mark("resolve_price");
-      } catch (e: any) {
-        if (storeCountry && storeCountry !== country) {
-          const r2 = await resolveUnitPrice(body.productId, variationId, storeCountry, (levelId ?? "default") as string);
-          basePrice = r2.price; isAffiliate = r2.isAffiliate;
-          country = storeCountry;
-          await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
-          mark("resolve_price_store_country");
-        } else {
-          throw e;
+        await dbc.query("BEGIN");
+        mark("tx_begin");
+
+        // Get cart context
+        const { rows: cartRows } = await dbc.query(
+          `SELECT ca.country, ca.channel, ca."clientId", cl."levelId"
+             FROM carts ca
+             JOIN clients cl ON cl.id = ca."clientId"
+            WHERE ca.id = $1
+            LIMIT 1`,
+          [cartId],
+        );
+        if (!cartRows[0]) {
+          await dbc.query("ROLLBACK");
+          return NextResponse.json({ error: "Cart not found" }, { status: 404 });
         }
-      }
+        let country = (cartRows[0].country || "").toUpperCase();
+        const channel: string | null = cartRows[0].channel ?? null;
+        const clientId: string = cartRows[0].clientId;
+        const levelId: string = cartRows[0].levelId ?? "default";
+        mark("cart_lookup");
 
-      client = await pool.connect();
-      await client.query("BEGIN");
-      mark("tx_begin");
-
-      // existing line (branch by affiliate for index usage)
-      let existing: any[] = [];
-      if (isAffiliate) {
-        const { rows } = await client.query(
-          `SELECT id, quantity FROM "cartProducts"
-            WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-          [cartId, body.productId, ...(variationId ? [variationId] : [])],
-        );
-        existing = rows;
-      } else {
-        const { rows } = await client.query(
-          `SELECT id, quantity FROM "cartProducts"
-            WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-          [cartId, body.productId, ...(variationId ? [variationId] : [])],
-        );
-        existing = rows;
-      }
-      mark("line_lookup");
-
-      // inventory guard (normal only)
-      if (!isAffiliate) {
-        const inv = await readInventoryFast(client, body.productId);
-        mark("read_inventory");
-        const newQty = (existing[0]?.quantity ?? 0) + body.quantity;
-        if (inv.manage && !inv.backorder && inv.stock !== null && newQty > inv.stock) {
-          await client.query("ROLLBACK");
-          return {
-            status: 400,
-            body: { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
-            headers: { "Server-Timing": encodeServerTiming(marks) },
-          };
-        }
-      }
-
-      // affiliate points flow
-      if (isAffiliate) {
-        const pointsNeeded = basePrice * body.quantity;
-        const { rows: bal } = await client.query(
-          `SELECT "pointsCurrent" FROM "affiliatePointBalances"
-            WHERE "organizationId"=$1 AND "clientId"=$2`,
-          [organizationId, clientId],
-        );
-        mark("affiliate_balance_lookup");
-
-        const current = Number(bal[0]?.pointsCurrent ?? 0);
-        if (pointsNeeded > current) {
-          await client.query("ROLLBACK");
-          return {
-            status: 400,
-            body: { error: "Insufficient affiliate points", required: pointsNeeded, available: current },
-            headers: { "Server-Timing": encodeServerTiming(marks) },
-          };
-        }
-
-        await client.query(
-          `UPDATE "affiliatePointBalances"
-              SET "pointsCurrent"="pointsCurrent"-$1,
-                  "pointsSpent"  ="pointsSpent"  +$1,
-                  "updatedAt"=NOW()
-            WHERE "organizationId"=$2 AND "clientId"=$3`,
-          [pointsNeeded, organizationId, clientId],
-        );
-        await client.query(
-          `INSERT INTO "affiliatePointLogs"
-             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
-           VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to cart',NOW(),NOW())`,
-          [organizationId, clientId, -pointsNeeded],
-        );
-        mark("affiliate_debit");
-      }
-
-      // upsert line + tier price (normal only)
-      let quantity = body.quantity + (existing[0]?.quantity ?? 0);
-      let unitPrice = basePrice;
-
-      if (!isAffiliate) {
-        const tiers = await getTiersCached(organizationId);
-        mark("tier_load");
-
-        const tier = pickTierForClient(tiers, country, body.productId, variationId, clientId);
-        if (tier) {
-          const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
-          const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-
-          // Split the SUM so indexes can be used
-          const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
-            client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
-              [cartId, tierProdIds],
-            ),
-            client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
-              [cartId, tierVarIds],
-            ),
+        // Determine if the incoming id is a normal product or an affiliate product
+        let isAffiliate = false;
+        {
+          const [p, ap] = await Promise.all([
+            dbc.query(`SELECT id FROM products WHERE id=$1 LIMIT 1`, [parsed.productId]),
+            dbc.query(`SELECT id FROM "affiliateProducts" WHERE id=$1 LIMIT 1`, [parsed.productId]),
           ]);
-          mark("tier_qty_sum");
+          if (!p.rows[0] && !ap.rows[0]) {
+            await dbc.query("ROLLBACK");
+            return NextResponse.json({ error: "Product not found" }, { status: 404 });
+          }
+          isAffiliate = !!ap.rows[0] && !p.rows[0];
+        }
+        mark("kind_detect");
 
-          const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
-          const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
-          const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
-          if (tierPrice != null && tierPrice !== basePrice) {
-            unitPrice = tierPrice;
-
-            // Split the UPDATE as well (avoid OR)
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierProdIds],
-            );
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierVarIds],
-            );
-            mark("tier_update_lines");
+        // Derive store country from channel for fallback
+        let storeCountry: string | null = null;
+        const storeId = parseStoreIdFromChannel(channel);
+        if (storeId) {
+          const { rows: sRows } = await dbc.query(
+            `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+            [storeId, ctx.organizationId]
+          );
+          if (sRows[0]?.address) {
+            try {
+              const addr = typeof sRows[0].address === "string" ? JSON.parse(sRows[0].address) : sRows[0].address;
+              if (addr?.country && typeof addr.country === "string") {
+                storeCountry = String(addr.country).toUpperCase();
+              }
+            } catch {}
           }
         }
-      }
+        mark("store_lookup");
 
-      if (existing.length) {
-        await client.query(
-          `UPDATE "cartProducts"
-              SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
-            WHERE id=$3`,
-          [quantity, unitPrice, existing[0].id]
-        );
-      } else {
-        if (variationId) {
-          await client.query(
-            `INSERT INTO "cartProducts"
-               (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
-            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice]
+        // Resolve unit price (points for affiliate; money for normal), possibly switching cart country
+        let unit: number;
+        if (isAffiliate) {
+          const { rows: ap } = await dbc.query(
+            `SELECT "regularPoints","salePoints" FROM "affiliateProducts" WHERE id=$1`,
+            [parsed.productId],
+          );
+          const pts =
+            ap[0]?.salePoints?.[levelId]?.[country] ??
+            ap[0]?.salePoints?.default?.[country] ??
+            ap[0]?.regularPoints?.[levelId]?.[country] ??
+            ap[0]?.regularPoints?.default?.[country] ?? 0;
+
+          if (pts > 0) {
+            unit = pts;
+          } else if (storeCountry && storeCountry !== country) {
+            const pts2 =
+              ap[0]?.salePoints?.[levelId]?.[storeCountry] ??
+              ap[0]?.salePoints?.default?.[storeCountry] ??
+              ap[0]?.regularPoints?.[levelId]?.[storeCountry] ??
+              ap[0]?.regularPoints?.default?.[storeCountry] ?? 0;
+            if (pts2 > 0) {
+              unit = pts2;
+              await dbc.query(`UPDATE carts SET country=$1 WHERE id=$2`, [storeCountry, cartId]);
+              country = storeCountry;
+            } else {
+              await dbc.query("ROLLBACK");
+              return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
+            }
+          } else {
+            await dbc.query("ROLLBACK");
+            return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
+          }
+
+          // Affiliate balance check (adding 1 unit)
+          const { rows: balRows } = await dbc.query(
+            `SELECT "pointsCurrent" FROM "affiliatePointBalances"
+               WHERE "organizationId"=$1 AND "clientId"=$2`,
+            [ctx.organizationId, clientId],
+          );
+          const pointsCurrent = Number(balRows[0]?.pointsCurrent ?? 0);
+          if (unit > pointsCurrent) {
+            await dbc.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "Insufficient affiliate points", required: unit, available: pointsCurrent },
+              { status: 400 },
+            );
+          }
+        } else {
+          try {
+            unit = (await resolveUnitPrice(parsed.productId, variationId, country, levelId)).price;
+          } catch (e: any) {
+            if (storeCountry && storeCountry !== country) {
+              unit = (await resolveUnitPrice(parsed.productId, variationId, storeCountry, levelId)).price;
+              await dbc.query(`UPDATE carts SET country=$1 WHERE id=$2`, [storeCountry, cartId]);
+              country = storeCountry;
+            } else {
+              throw e;
+            }
+          }
+        }
+        mark("resolve_price");
+
+        // Existing line?
+        const withVariation = variationId !== null;
+        const whereVar = withVariation ? ` AND "variationId"=$3` : "";
+        const baseArgs = [cartId, parsed.productId, ...(withVariation ? [variationId] as any[] : [])];
+
+        let existingQty = 0;
+        if (isAffiliate) {
+          const { rows } = await dbc.query(
+            `SELECT quantity FROM "cartProducts"
+              WHERE "cartId"=$1 AND "affiliateProductId"=$2${whereVar}
+              LIMIT 1`,
+            baseArgs
+          );
+          existingQty = Number(rows?.[0]?.quantity ?? 0);
+        } else {
+          const { rows } = await dbc.query(
+            `SELECT quantity FROM "cartProducts"
+              WHERE "cartId"=$1 AND "productId"=$2${whereVar}
+              LIMIT 1`,
+            baseArgs
+          );
+          existingQty = Number(rows?.[0]?.quantity ?? 0);
+        }
+        mark("line_lookup");
+
+        // Inventory enforcement (normal products only) — verify adding 1 won't exceed stock if managed & no backorder
+        if (!isAffiliate) {
+          const inv = await readInventoryFast(dbc, parsed.productId, variationId);
+          if (inv.manage && !inv.backorder && inv.stock !== null) {
+            const nextQty = existingQty + 1;
+            if (nextQty > inv.stock) {
+              await dbc.query("ROLLBACK");
+              return NextResponse.json(
+                { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
+                { status: 400 }
+              );
+            }
+          }
+        }
+        mark("inventory_check");
+
+        // Persist
+        if (isAffiliate) {
+          if (existingQty > 0) {
+            await dbc.query(
+              `UPDATE "cartProducts"
+                  SET quantity=quantity+1, "unitPrice"=$1, "updatedAt"=NOW()
+                WHERE "cartId"=$2 AND "affiliateProductId"=$3${whereVar}`,
+              [unit, cartId, parsed.productId, ...(withVariation ? [variationId] : [])]
+            );
+          } else {
+            await dbc.query(
+              `INSERT INTO "cartProducts"
+                 ("cartId","affiliateProductId","variationId","quantity","unitPrice","createdAt","updatedAt")
+               VALUES ($1,$2,$3,1,$4,NOW(),NOW())`,
+              [cartId, parsed.productId, variationId, unit]
+            );
+          }
+
+          // Deduct affiliate points for +1
+          await dbc.query(
+            `UPDATE "affiliatePointBalances"
+                SET "pointsCurrent"="pointsCurrent"-$1,
+                    "pointsSpent"  ="pointsSpent"+$1,
+                    "updatedAt"=NOW()
+              WHERE "organizationId"=$2 AND "clientId"=$3`,
+            [unit, ctx.organizationId, clientId],
+          );
+          await dbc.query(
+            `INSERT INTO "affiliatePointLogs"
+               (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+             VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to pos cart',NOW(),NOW())`,
+            [ctx.organizationId, clientId, -unit],
           );
         } else {
-          await client.query(
-            `INSERT INTO "cartProducts"
-               (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice]
-          );
+          if (existingQty > 0) {
+            await dbc.query(
+              `UPDATE "cartProducts"
+                  SET quantity=quantity+1, "unitPrice"=$1, "updatedAt"=NOW()
+                WHERE "cartId"=$2 AND "productId"=$3${whereVar}`,
+              [unit, cartId, parsed.productId, ...(withVariation ? [variationId] : [])]
+            );
+          } else {
+            await dbc.query(
+              `INSERT INTO "cartProducts"
+                 ("cartId","productId","variationId","quantity","unitPrice","createdAt","updatedAt")
+               VALUES ($1,$2,$3,1,$4,NOW(),NOW())`,
+              [cartId, parsed.productId, variationId, unit]
+            );
+          }
         }
+        mark("persist");
+
+        // Adjust stock (-1)
+        await adjustStock(dbc, parsed.productId, variationId, country, -1);
+        mark("adjust_stock");
+
+        // FAST cart hash (aggregate)
+        const { rows: hv } = await dbc.query(
+          `SELECT COUNT(*)::int AS n,
+                  COALESCE(SUM(quantity),0)::int AS q,
+                  COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
+             FROM "cartProducts" WHERE "cartId"=$1`,
+          [cartId]
+        );
+        const newHash = crypto.createHash("sha256")
+          .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
+          .digest("hex");
+        await dbc.query(
+          `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
+          [newHash, cartId]
+        );
+        mark("hash_update");
+
+        await dbc.query("COMMIT");
+        mark("tx_commit");
+
+        // broadcast latest cart to the paired customer display (non-blocking)
+        try { setTimeout(() => { (async () => { try { await emitCartToDisplay(cartId); } catch {} })(); }, 0); } catch {}
+        mark("emit_display_sched");
+
+        // Snapshot (same shape as update-product)
+        const { rows: snap } = await pool.query(
+          `SELECT 
+             p.id                            AS pid,
+             p.title                         AS parent_title,
+             p.image                         AS parent_image,
+             p.sku                           AS parent_sku,
+             v.attributes                    AS var_attributes,
+             v.image                         AS var_image,
+             v.sku                           AS var_sku,
+             cp.quantity,
+             cp."unitPrice",
+             cp."variationId",
+             false                           AS "isAffiliate",
+             cp."createdAt"                  AS created_at
+           FROM "cartProducts" cp
+           JOIN products p            ON cp."productId" = p.id
+           LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+           WHERE cp."cartId"=$1
+
+           UNION ALL
+
+           SELECT 
+             ap.id                           AS pid,
+             ap.title                        AS parent_title,
+             ap.image                        AS parent_image,
+             ap.sku                          AS parent_sku,
+             NULL::jsonb                     AS var_attributes,
+             NULL::text                      AS var_image,
+             NULL::text                      AS var_sku,
+             cp.quantity,
+             cp."unitPrice",
+             cp."variationId",
+             true                            AS "isAffiliate",
+             cp."createdAt"                  AS created_at
+           FROM "cartProducts" cp
+           JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
+           WHERE cp."cartId"=$1
+
+           ORDER BY created_at`,
+          [cartId]
+        );
+        const lines = snap.map((r: any) => {
+          const unitPrice = Number(r.unitPrice);
+          const title = r.isAffiliate
+            ? r.parent_title
+            : formatVariationTitle(r.parent_title, r.var_attributes);
+          const image = r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null);
+          const sku = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
+          return {
+            id: r.pid,
+            title,
+            image,
+            sku,
+            quantity: Number(r.quantity),
+            unitPrice,
+            variationId: r.variationId,
+            isAffiliate: r.isAffiliate,
+            subtotal: unitPrice * Number(r.quantity),
+          };
+        });
+
+        const totalMs = Date.now() - T0;
+        const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
+        const res = NextResponse.json({ lines }, { status: 200 });
+        res.headers.set("Server-Timing", serverTiming);
+        res.headers.set("X-Route-Duration", `${totalMs}ms`);
+        return res;
+      } catch (e) {
+        await dbc.query("ROLLBACK");
+        throw e;
+      } finally {
+        dbc.release();
       }
-      mark("upsert_line");
-
-      // stock adjust (effective country used above)
-      await adjustStock(client, body.productId, variationId, country, -body.quantity);
-      mark("adjust_stock");
-
-      // FAST cart hash (aggregate instead of hashing row JSON)
-      const { rows: hv } = await client.query(
-        `SELECT COUNT(*)::int AS n,
-                COALESCE(SUM(quantity),0)::int AS q,
-                COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
-           FROM "cartProducts"
-          WHERE "cartId"=$1`,
-        [cartId]
-      );
-      const hash = crypto.createHash("sha256")
-        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
-        .digest("hex");
-      await client.query(
-        `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
-        [hash, cartId]
-      );
-      mark("hash_update");
-
-      await client.query("COMMIT");
-      mark("tx_commit");
-
-      // Fire-and-forget display emit (quiet + timeout budget)
-      try {
-        setTimeout(() => {
-          fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
-        }, 0);
-      } catch {}
-      mark("emit_display_sched");
-
-      // Single-roundtrip snapshot with proper variant titles
-      const { rows: snap } = await pool.query(
-        `SELECT 
-           p.id                            AS pid,
-           p.title                         AS parent_title,
-           p.image                         AS parent_image,
-           p.sku                           AS parent_sku,
-           v.attributes                    AS var_attributes,
-           v.image                         AS var_image,
-           v.sku                           AS var_sku,
-           cp.quantity,
-           cp."unitPrice",
-           cp."variationId",
-           false                           AS "isAffiliate",
-           cp."createdAt"                  AS created_at
-         FROM "cartProducts" cp
-         JOIN products p            ON cp."productId" = p.id
-         LEFT JOIN "productVariations" v ON v.id = cp."variationId"
-         WHERE cp."cartId"=$1
-
-         UNION ALL
-
-         SELECT 
-           ap.id                           AS pid,
-           ap.title                        AS parent_title,
-           ap.image                        AS parent_image,
-           ap.sku                          AS parent_sku,
-           NULL::jsonb                     AS var_attributes,
-           NULL::text                      AS var_image,
-           NULL::text                      AS var_sku,
-           cp.quantity,
-           cp."unitPrice",
-           cp."variationId",
-           true                            AS "isAffiliate",
-           cp."createdAt"                  AS created_at
-         FROM "cartProducts" cp
-         JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
-         WHERE cp."cartId"=$1
-
-         ORDER BY created_at`,
-        [cartId]
-      );
-      mark("snapshot_query");
-
-      const lines = snap.map((r: any) => {
-        const unitPrice = Number(r.unitPrice);
-        const title = r.isAffiliate
-          ? r.parent_title
-          : formatVariationTitle(r.parent_title, r.var_attributes);
-        const image = r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null);
-        const sku   = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
-        return {
-          id: r.pid,
-          title,
-          image,
-          sku,
-          quantity: Number(r.quantity),
-          unitPrice,
-          variationId: r.variationId,
-          isAffiliate: r.isAffiliate,
-          subtotal: unitPrice * Number(r.quantity),
-        };
-      });
-
-      const totalMs = Date.now() - T0;
-      const serverTiming = encodeServerTiming(marks);
-      return {
-        status: 201,
-        body: { lines },
-        headers: {
-          ...BASE_HEADERS,
-          "Server-Timing": serverTiming,
-          "X-Route-Duration": `${totalMs}ms`,
-        },
-      };
     } catch (err: any) {
-      try { if (client) await client.query("ROLLBACK"); } catch {}
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
+      if (err instanceof z.ZodError) return NextResponse.json({ error: err.errors }, { status: 400 });
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
-        return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
+        return NextResponse.json({ error: err.message }, { status: 400 });
       }
       console.error("[POS POST /pos/cart/:id/add-product]", err);
-      return { status: 500, body: { error: err.message ?? "Internal server error" }, headers: BASE_HEADERS };
-    } finally {
-      try { if (client) client.release(); } catch {}
+      return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 });
     }
   });
 }
