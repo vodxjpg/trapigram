@@ -347,7 +347,7 @@ export function POSInterface() {
     })
   }, [products, selectedCategoryId, debouncedSearch, parentById])
 
-  // totals
+  // totals (client-side estimate for cart UI)
   const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
   const discountAmount = useMemo(() => {
     const v = Number(discountValue)
@@ -360,12 +360,10 @@ export function POSInterface() {
   }, [discountType, discountValue, subtotalEstimate])
   const totalEstimate = Math.max(0, +(subtotalEstimate - discountAmount).toFixed(2))
 
-  // NEW: total items for the mobile bar
   const itemCount = useMemo(() => lines.reduce((n, l) => n + (l.quantity || 0), 0), [lines])
 
   const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
-  // variant title override using productsFlat (instant fix if server sends IDs)
   const titleFor = useCallback((pid: string, vid: string | null, fallback: string) => {
     const m = products.find(p => p.productId === pid && p.variationId === (vid ?? null));
     return m?.title || fallback;
@@ -439,7 +437,6 @@ export function POSInterface() {
       }
 
       const key = productKeyOf(p)
-      // prevent double-spam on the same tile
       if (addingKeys.has(key)) return
       setAddingKeys(prev => {
         const next = new Set(prev)
@@ -484,7 +481,6 @@ export function POSInterface() {
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
     } finally {
-      // always clear loader for this product
       const key = productKeyOf(p)
       setAddingKeys(prev => {
         const next = new Set(prev)

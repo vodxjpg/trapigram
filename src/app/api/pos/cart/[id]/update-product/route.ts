@@ -1,4 +1,3 @@
-// src/app/api/pos/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -6,22 +5,7 @@ import { getContext } from "@/lib/context";
 import crypto from "crypto";
 import { adjustStock } from "@/lib/stock";
 import { resolveUnitPrice } from "@/lib/pricing";
-import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
-
-/* ─────────────────────────────────────────────────────────────
-   Small caches (mirror add-product for parity/perf)
-  ───────────────────────────────────────────────────────────── */
-const TIER_TTL_MS = 120_000;
-const tierCache = new Map<string, { at: number; data: Tier[] }>();
-async function getTiersCached(orgId: string): Promise<Tier[]> {
-  const now = Date.now();
-  const hit = tierCache.get(orgId);
-  if (hit && now - hit.at < TIER_TTL_MS) return hit.data;
-  const data = (await tierPricing(orgId)) as Tier[];
-  tierCache.set(orgId, { at: now, data });
-  return data;
-}
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -91,38 +75,6 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   return m ? m[1] : null;
 }
 
-function pickTierForClient(
-  tiers: Tier[],
-  country: string,
-  productId: string,
-  variationId: string | null,
-  clientId?: string | null,
-): Tier | null {
-  const CC = (country || "").toUpperCase();
-  const inTier = (t: Tier) =>
-    t.active === true &&
-    t.countries.some((c) => (c || "").toUpperCase() === CC) &&
-    t.products.some(
-      (p) =>
-        (p.productId && p.productId === productId) ||
-        (!!variationId && p.variationId === variationId),
-    );
-  const candidates = tiers.filter(inTier);
-  if (!candidates.length) return null;
-
-  const targets = (t: Tier): string[] =>
-    ((((t as any).clients as string[] | undefined) ??
-      ((t as any).customers as string[] | undefined) ??
-      []) as string[]).filter(Boolean);
-
-  if (clientId) {
-    const targeted = candidates.find((t) => targets(t).includes(clientId));
-    if (targeted) return targeted;
-  }
-  const global = candidates.find((t) => targets(t).length === 0);
-  return global ?? null;
-}
-
 /** Inventory reader aligned with your schema. */
 async function readInventoryFast(
   client: any,
@@ -164,7 +116,7 @@ async function readInventoryFast(
   return { manage, backorder, stock };
 }
 
-/* Variant title helpers (same as add-product) */
+/* Variant title helpers (unchanged) */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function readLabelish(x: any): string | null {
   if (x == null) return null;
@@ -218,9 +170,7 @@ function withTimeout<T>(p: Promise<T>, ms: number) {
     new Promise<never>((_, rej) => setTimeout(() => rej(new Error("emit-timeout")), ms)),
   ]);
 }
-function fireAndForget(p: Promise<any>) {
-  p.catch(() => { });
-}
+function fireAndForget(p: Promise<any>) { p.catch(() => {}); }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
@@ -297,12 +247,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
               if (addr?.country && typeof addr.country === "string") {
                 storeCountry = String(addr.country).toUpperCase();
               }
-            } catch { }
+            } catch {}
           }
         }
         mark("store_lookup");
 
-        // base price
+        // base price (NO tier logic here)
         let basePrice: number;
         if (isAffiliate) {
           const { rows: ap } = await client.query(
@@ -423,50 +373,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         mark("inventory_check");
 
-        // tier pricing (normal only) with cached tiers
-        let pricePerUnit = basePrice;
-        if (!isAffiliate) {
-          const tiers = await getTiersCached(ctx.organizationId);
-          const tier = pickTierForClient(tiers, country, data.productId, variationId, clientId);
-          if (tier) {
-            const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
-            const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-
-            const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
-              client.query(
-                `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                   FROM "cartProducts"
-                  WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
-                [cartId, tierProdIds],
-              ),
-              client.query(
-                `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                   FROM "cartProducts"
-                  WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
-                [cartId, tierVarIds],
-              ),
-            ]);
-            const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
-            const qtyAfter = qtyBefore - oldQty + newQty;
-            pricePerUnit = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
-
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
-              [pricePerUnit, cartId, tierProdIds],
-            );
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
-              [pricePerUnit, cartId, tierVarIds],
-            );
-          }
-        }
-        mark("tier_adjust");
-
-        // persist
+        // persist (NO tier logic here — use basePrice only)
         if (newQty === 0) {
           if (isAffiliate) {
             await client.query(
@@ -487,14 +394,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
               `UPDATE "cartProducts"
                   SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
                 WHERE "cartId"=$3 AND "affiliateProductId"=$4 ${withVariation ? `AND "variationId"=$5` : ""}`,
-              [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
+              [newQty, basePrice, cartId, data.productId, ...(withVariation ? [variationId] : [])]
             );
           } else {
             await client.query(
               `UPDATE "cartProducts"
                   SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
                 WHERE "cartId"=$3 AND "productId"=$4 ${withVariation ? `AND "variationId"=$5` : ""}`,
-              [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
+              [newQty, basePrice, cartId, data.productId, ...(withVariation ? [variationId] : [])]
             );
           }
         }
@@ -526,10 +433,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         // broadcast latest cart to the paired customer display (non-blocking)
         try {
-          setTimeout(() => {
-            fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
-          }, 0);
-        } catch { }
+          setTimeout(() => { fireAndForget(withTimeout(emitCartToDisplay(cartId), 300)); }, 0);
+        } catch {}
         mark("emit_display_sched");
 
         // Single-roundtrip snapshot
@@ -596,13 +501,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           };
         });
 
-        // Add timing headers + log
         const totalMs = Date.now() - T0;
         const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
-        console.log(
-          `[POS][update-product] cart=${cartId} product=${data.productId} var=${variationId ?? "base"} action=${data.action} ${totalMs}ms`,
-          Object.fromEntries(marks)
-        );
         const res = NextResponse.json({ lines }, { status: 200 });
         res.headers.set("Server-Timing", serverTiming);
         res.headers.set("X-Route-Duration", `${totalMs}ms`);

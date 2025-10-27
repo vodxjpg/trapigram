@@ -7,6 +7,194 @@ import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 import { emitIdleForCart } from "@/lib/customer-display-emit";
+import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
+
+/* ========= Fast tier repricing (single place) ========= */
+
+const TIER_TTL_MS = 120_000;
+const tierCache = new Map<string, { at: number; data: Tier[] }>();
+async function getTiersCached(orgId: string): Promise<Tier[]> {
+  const now = Date.now();
+  const hit = tierCache.get(orgId);
+  if (hit && now - hit.at < TIER_TTL_MS) return hit.data;
+  const data = (await tierPricing(orgId)) as Tier[];
+  tierCache.set(orgId, { at: now, data });
+  return data;
+}
+function targetsList(t: Tier): string[] {
+  return ((((t as any).clients as string[] | undefined) ??
+          ((t as any).customers as string[] | undefined) ??
+          []) as string[]).filter(Boolean);
+}
+
+/**
+ * Recompute tier prices for a cart, based on current quantities.
+ * - dryRun=true  → compute effective subtotal without mutating DB
+ * - dryRun=false → UPDATE affected lines to new unitPrice and return new subtotal
+ *
+ * Precedence: targeted tiers (clients contains this clientId) override global tiers
+ * for overlapping products. Global tiers never override a targeted assignment.
+ */
+async function repriceCart(
+  cartId: string,
+  organizationId: string,
+  { dryRun, client }: { dryRun: boolean; client?: any }
+): Promise<{ subtotal: number; changedLines: number }> {
+  const db = client ?? pool;
+
+  // cart context (country + client)
+  const { rows: cRows } = await db.query(
+    `SELECT country, "clientId" FROM carts WHERE id=$1 LIMIT 1`,
+    [cartId]
+  );
+  if (!cRows.length) return { subtotal: 0, changedLines: 0 };
+  const country = String(cRows[0].country || "").toUpperCase();
+  const clientId = String(cRows[0].clientId || "");
+
+  // load tiers and filter by country
+  const tiersAll = await getTiersCached(organizationId);
+  const inCountry = (t: Tier) => t.active === true && (t.countries || []).some((c) => String(c || "").toUpperCase() === country);
+  const targeted = tiersAll.filter((t) => inCountry(t) && targetsList(t).includes(clientId));
+  const global   = tiersAll.filter((t) => inCountry(t) && targetsList(t).length === 0);
+
+  // load all cart lines (we only touch normal products here)
+  const { rows: raw } = await db.query(
+    `SELECT id,"productId","affiliateProductId","variationId",quantity,"unitPrice"
+       FROM "cartProducts" WHERE "cartId"=$1`,
+    [cartId]
+  );
+  const lines = raw
+    .filter((r: any) => !r.affiliateProductId)
+    .map((r: any) => ({
+      id: String(r.id),
+      productId: String(r.productId),
+      variationId: r.variationId ? String(r.variationId) : null,
+      quantity: Number(r.quantity || 0),
+      unitPrice: Number(r.unitPrice || 0),
+    }));
+
+  // lookup helpers
+  const indexByProduct = new Map<string, number[]>();
+  const indexByVar = new Map<string, number[]>();
+  lines.forEach((l, idx) => {
+    (indexByProduct.get(l.productId) ?? indexByProduct.set(l.productId, []).get(l.productId)!).push(idx);
+    if (l.variationId) {
+      (indexByVar.get(l.variationId) ?? indexByVar.set(l.variationId, []).get(l.variationId)!).push(idx);
+    }
+  });
+
+  // override map for dryRun subtotal + to know what to update
+  const newPriceByLine = new Map<number, number>();
+  const lockedProducts = new Set<string>();
+  const lockedVars = new Set<string>();
+
+  const applyTier = (t: Tier) => {
+    const tierProdIds = (t.products || []).map((p: any) => p.productId).filter(Boolean) as string[];
+    const tierVarIds  = (t.products || []).map((p: any) => p.variationId).filter(Boolean) as string[];
+
+    // total quantity in cart for this tier group
+    let qty = 0;
+    for (const pid of tierProdIds) {
+      const idxs = indexByProduct.get(pid) || [];
+      for (const i of idxs) qty += lines[i].quantity;
+    }
+    for (const vid of tierVarIds) {
+      const idxs = indexByVar.get(vid) || [];
+      for (const i of idxs) qty += lines[i].quantity;
+    }
+    if (qty <= 0) return;
+
+    const tierPrice = getPriceForQuantity((t as any).steps || [], qty);
+    if (tierPrice == null) return;
+
+    // assign price for all matching lines not yet locked
+    const willUpdateP: string[] = [];
+    const willUpdateV: string[] = [];
+
+    // products first
+    for (const pid of tierProdIds) {
+      if (lockedProducts.has(pid)) continue;
+      const idxs = indexByProduct.get(pid) || [];
+      if (!idxs.length) continue;
+      for (const i of idxs) newPriceByLine.set(i, tierPrice);
+      willUpdateP.push(pid);
+    }
+    // variations
+    for (const vid of tierVarIds) {
+      if (lockedVars.has(vid)) continue;
+      const idxs = indexByVar.get(vid) || [];
+      if (!idxs.length) continue;
+      for (const i of idxs) newPriceByLine.set(i, tierPrice);
+      willUpdateV.push(vid);
+    }
+
+    // lock sets so later (global) tiers don't override targeted
+    willUpdateP.forEach((p) => lockedProducts.add(p));
+    willUpdateV.forEach((v) => lockedVars.add(v));
+
+    return { willUpdateP, willUpdateV, tierPrice };
+  };
+
+  let changed = 0;
+
+  // 1) targeted tiers win
+  const targetedPlan = targeted
+    .map(applyTier)
+    .filter(Boolean) as Array<{ willUpdateP: string[]; willUpdateV: string[]; tierPrice: number }>;
+
+  // 2) global tiers apply only to not-yet-locked items
+  const globalPlan = global
+    .map(applyTier)
+    .filter(Boolean) as Array<{ willUpdateP: string[]; willUpdateV: string[]; tierPrice: number }>;
+
+  if (!dryRun) {
+    // persist changes tier by tier, avoiding write when unitPrice already equal
+    for (const step of [...targetedPlan, ...globalPlan]) {
+      if (step.willUpdateP.length) {
+        const r = await db.query(
+          `UPDATE "cartProducts"
+              SET "unitPrice"=$1,"updatedAt"=NOW()
+            WHERE "cartId"=$2 AND "productId" = ANY($3::text[]) AND "unitPrice" <> $1`,
+          [step.tierPrice, cartId, step.willUpdateP],
+        );
+        changed += Number(r.rowCount || 0);
+      }
+      if (step.willUpdateV.length) {
+        const r = await db.query(
+          `UPDATE "cartProducts"
+              SET "unitPrice"=$1,"updatedAt"=NOW()
+            WHERE "cartId"=$2 AND "variationId" = ANY($3::text[]) AND "unitPrice" <> $1`,
+          [step.tierPrice, cartId, step.willUpdateV],
+        );
+        changed += Number(r.rowCount || 0);
+      }
+    }
+  }
+
+  // compute subtotal
+  if (dryRun) {
+    let subtotal = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const price = newPriceByLine.has(i) ? newPriceByLine.get(i)! : lines[i].unitPrice;
+      subtotal += price * lines[i].quantity;
+    }
+    // include affiliate products at stored unitPrice
+    const { rows: aff } = await db.query(
+      `SELECT quantity,"unitPrice" FROM "cartProducts" WHERE "cartId"=$1 AND "affiliateProductId" IS NOT NULL`,
+      [cartId]
+    );
+    for (const a of aff) subtotal += Number(a.quantity || 0) * Number(a.unitPrice || 0);
+    return { subtotal, changedLines: 0 };
+  } else {
+    const { rows: sum } = await db.query(
+      `SELECT COALESCE(SUM(quantity * "unitPrice"),0)::numeric AS subtotal
+         FROM "cartProducts" WHERE "cartId"=$1`,
+      [cartId]
+    );
+    const subtotal = Number(sum[0]?.subtotal ?? 0);
+    return { subtotal, changedLines: changed };
+  }
+}
 
 /* ========= Revenue helpers (inlined) ========= */
 
@@ -305,7 +493,7 @@ async function getRevenue(id: string, organizationId: string) {
   let applyCryptoOverride = false;
   let coinRaw = "";
   let amount = 0;
-  if (paymentType === "niftipay") {
+  if (String(order.paymentMethod ?? "").toLowerCase() === "niftipay") {
     const metaArr: any[] = Array.isArray(order.orderMeta)
       ? order.orderMeta
       : JSON.parse(order.orderMeta ?? "[]");
@@ -340,8 +528,8 @@ async function getRevenue(id: string, organizationId: string) {
 
   let USDEUR = 0, USDGBP = 0;
   if (!fxRows.length) {
-    const apiKey = process.env.CURRENCY_LAYER_API_KEY;
-    const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
+    const apiKey2 = process.env.CURRENCY_LAYER_API_KEY;
+    const url = `https://api.currencylayer.com/live?access_key=${apiKey2}&currencies=EUR,GBP`;
     const { res: clRes, data } = await fetchJSON(url, { timeoutMs: 5000 });
     const usdEur = Number(data?.quotes?.USDEUR ?? 0);
     const usdGbp = Number(data?.quotes?.USDGBP ?? 0);
@@ -613,12 +801,12 @@ async function fetchCurrentUserFromSession(req: NextRequest): Promise<MinimalUse
   }
 }
 
-/* GET: summary + ACTIVE payment methods */
+/* GET: summary + ACTIVE payment methods + effectiveSubtotal (dry-run reprice) */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { tenantId } = ctx as { tenantId: string | null };
+  const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
   const url = new URL(req.url);
@@ -632,8 +820,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not a POS cart" }, { status: 400 });
   }
 
+  // NEW: preview subtotal with tiers applied (no writes)
+  const { subtotal: effectiveSubtotal } = await repriceCart(cartId, organizationId, { dryRun: true });
+
   const methods = await activePaymentMethods(tenantId);
-  return NextResponse.json({ summary, paymentMethods: methods }, { status: 200 });
+  return NextResponse.json({ summary, paymentMethods: methods, effectiveSubtotal }, { status: 200 });
 }
 
 /* POST: create order for POS cart (supports split payments) */
@@ -647,7 +838,6 @@ export async function POST(req: NextRequest) {
     const rawBody = await req.json();
     const { cartId, payments, storeId, registerId, discount, parked } =
       CheckoutCreateSchema.parse(rawBody);
-    // If the client sent extra fields (like niftipay) they remain available on rawBody.
     const isParked = Boolean(parked);
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
@@ -670,150 +860,166 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const shippingTotal = 0;
-    const subtotal = Number(summary.subtotal || 0);
-
-    // ── POS discount → coupon "POS"
-    let discountTotal = 0;
-    let couponCode: string | null = null;
-    let couponType: "fixed" | "percentage" | null = null;
-    let discountValueArr: string[] = [];
+    // ── Persist discount marker (couponCode) early, but compute final amount after repricing
+    let discountKind: "fixed" | "percentage" | null = null;
+    let discountValue = 0;
     if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-      if (discount.type === "percentage") {
-        const pct = Math.max(0, Math.min(100, discount.value));
-        discountTotal = +(subtotal * (pct / 100)).toFixed(2);
-        couponCode = "POS";
-        couponType = "percentage";
-        discountValueArr = [String(pct)];
-      } else {
-        const fixed = Math.max(0, discount.value);
-        discountTotal = +Math.min(subtotal, fixed).toFixed(2);
-        couponCode = "POS";
-        couponType = "fixed";
-        discountValueArr = [String(fixed)];
-      }
-      // keep carts table in sync
+      discountKind = discount.type;
+      discountValue = discount.value;
       await pool.query(
         `UPDATE carts SET "couponCode" = $1, "updatedAt" = NOW() WHERE id = $2`,
-        [couponCode, cartId],
+        ["POS", cartId],
       );
     }
 
-    const totalAmount = +(subtotal + shippingTotal - discountTotal).toFixed(2);
-    const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
-    const epsilon = 0.01;
-
-    // For BOTH normal and parked, payments must cover 100% (within epsilon)
-    if (Math.abs(paid - totalAmount) > epsilon) {
-      return NextResponse.json(
-        { error: `Selected payments (${paid.toFixed(2)}) must equal the total (${totalAmount.toFixed(2)}).` },
-        { status: 400 }
-      );
-    }
-
-    const orderId = uuidv4();
-    // Sequential POS order number: POS-0001, POS-0002, ...
-    // Reuse the global order_key_seq so numbers don't collide across channels.
-    await pool.query(
-      `CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`
-    );
-    const { rows: seqRows } = await pool.query(
-      `SELECT nextval('order_key_seq') AS seq`
-    );
-    const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
-    const orderKey = `POS-${seqNum}`;
-    const primaryMethodName =
-      payments.length === 0
-        ? null
-        : (payments.length > 1
-          ? 'split'
-          : (methods.find((m: any) => String(m.id) === String(payments[0].methodId))?.name ?? null))
-
-
-    let orderChannel = summary.channel;
-    if (orderChannel === "pos-" && (storeId || registerId)) {
-      orderChannel = `pos-${storeId ?? "na"}-${registerId ?? "na"}`;
-      await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [orderChannel, cartId]);
-    }
-
-
-    // Cashier meta event
-    const currentUser = await fetchCurrentUserFromSession(req);
-    const cashierEvent = {
-      event: "cashier",
-      type: "pos_checkout",
-      cashierId: currentUser?.id ?? (ctx as any).userId ?? null,
-      cashierName: currentUser?.name ?? null,
-      storeId: storeId ?? null,
-      registerId: registerId ?? null,
-      at: new Date().toISOString(),
-    };
-    const metaArr: any[] = [cashierEvent];
-    if (isParked) {
-      metaArr.push({
-        event: "parked",
-        remaining: +(totalAmount - paid).toFixed(2),
-        total: totalAmount,
-        paid: +paid.toFixed(2),
-        at: new Date().toISOString(),
-      });
-    }
-    const initialOrderMeta = JSON.stringify(metaArr);
-
-    const orderStatus = isParked ? "pending_payment" : "paid";
-    const datePaid = isParked ? null : new Date();
-    const dateCompleted = isParked ? null : new Date();
-
-    const insertSql = `
-     INSERT INTO orders (
-        id,"clientId","cartId",country,status,
-        "paymentMethod","orderKey","cartHash",
-        "shippingTotal","discountTotal","totalAmount",
-        "couponCode","couponType","discountValue",
-        "shippingService",
-        "dateCreated","datePaid","dateCompleted","dateCancelled",
-        "orderMeta",
-        "createdAt","updatedAt","organizationId",channel
-      ) VALUES (
-        $1,$2,$3,$4,$5,
-        $6,$7,$8,
-        $9,$10,$11,
-        $12,$13,$14,
-        $15,
-        $16,$17,$18,$19,
-        $20::jsonb,
-        NOW(),NOW(),$21,$22
-      )
-      RETURNING *`;
-
-    const vals = [
-      orderId,
-      summary.clientId,
-      summary.cartId,
-      summary.country,
-      orderStatus,                 //  "paid" or "pending payment"
-      primaryMethodName,             // may be null → ensure column allows it; otherwise keep methods[0].id
-      orderKey,
-      summary.cartUpdatedHash,
-      shippingTotal,
-      discountTotal,
-      totalAmount,
-      couponCode,
-      couponType,
-      discountValueArr,
-      "-",
-      new Date(),                  // dateCreated
-      datePaid,
-      dateCompleted,
-      null,                        // dateCancelled
-      initialOrderMeta,
-      organizationId,
-      orderChannel,
-    ];
-
+    // ── Single repricing pass (persist) INSIDE the transaction we use for order insert
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
+
+      // Apply tier prices now and compute fresh subtotal
+      const { subtotal: pricedSubtotal } = await repriceCart(cartId, organizationId, { dryRun: false, client: tx });
+
+      // Recompute cart hash after repricing so order.cartHash is correct
+      const { rows: hv } = await tx.query(
+        `SELECT COUNT(*)::int AS n,
+                COALESCE(SUM(quantity),0)::int AS q,
+                COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
+           FROM "cartProducts" WHERE "cartId"=$1`,
+        [cartId]
+      );
+      const cartHash = crypto.createHash("sha256")
+        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
+        .digest("hex");
+      await tx.query(`UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`, [cartHash, cartId]);
+
+      // Recompute totals using the *repriced* subtotal
+      const shippingTotal = 0;
+      const subtotal = Number(pricedSubtotal || 0);
+
+      let discountTotal = 0;
+      let couponType: "fixed" | "percentage" | null = null;
+      let discountValueArr: string[] = [];
+      if (discountKind && discountValue > 0) {
+        if (discountKind === "percentage") {
+          const pct = Math.max(0, Math.min(100, discountValue));
+          discountTotal = +(subtotal * (pct / 100)).toFixed(2);
+          couponType = "percentage";
+          discountValueArr = [String(pct)];
+        } else {
+          const fixed = Math.max(0, discountValue);
+          discountTotal = +Math.min(subtotal, fixed).toFixed(2);
+          couponType = "fixed";
+          discountValueArr = [String(fixed)];
+        }
+      }
+
+      const totalAmount = +(subtotal + shippingTotal - discountTotal).toFixed(2);
+      const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+      const epsilon = 0.01;
+
+      // Payments must cover 100% (within epsilon)
+      if (Math.abs(paid - totalAmount) > epsilon) {
+        await tx.query("ROLLBACK");
+        return NextResponse.json(
+          { error: `Total changed after quantity discounts were applied. New total is ${totalAmount.toFixed(2)}.` },
+          { status: 409 }
+        );
+      }
+
+      const orderId = uuidv4();
+      // Sequential POS order number: POS-0001, POS-0002, ...
+      await tx.query(`CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`);
+      const { rows: seqRows } = await tx.query(`SELECT nextval('order_key_seq') AS seq`);
+      const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
+      const orderKey = `POS-${seqNum}`;
+      const primaryMethodName =
+        payments.length === 0
+          ? null
+          : (payments.length > 1
+              ? 'split'
+              : (methods.find((m: any) => String(m.id) === String(payments[0].methodId))?.name ?? null));
+
+      let orderChannel = summary.channel;
+      if (orderChannel === "pos-" && (storeId || registerId)) {
+        orderChannel = `pos-${storeId ?? "na"}-${registerId ?? "na"}`;
+        await tx.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [orderChannel, cartId]);
+      }
+
+      // Cashier meta event
+      const currentUser = await fetchCurrentUserFromSession(req);
+      const cashierEvent = {
+        event: "cashier",
+        type: "pos_checkout",
+        cashierId: currentUser?.id ?? (ctx as any).userId ?? null,
+        cashierName: currentUser?.name ?? null,
+        storeId: storeId ?? null,
+        registerId: registerId ?? null,
+        at: new Date().toISOString(),
+      };
+      const metaArr: any[] = [cashierEvent];
+      if (isParked) {
+        metaArr.push({
+          event: "parked",
+          remaining: +(totalAmount - paid).toFixed(2),
+          total: totalAmount,
+          paid: +paid.toFixed(2),
+          at: new Date().toISOString(),
+        });
+      }
+      const initialOrderMeta = JSON.stringify(metaArr);
+
+      const orderStatus = isParked ? "pending_payment" : "paid";
+      const datePaid = isParked ? null : new Date();
+      const dateCompleted = isParked ? null : new Date();
+
+      const insertSql = `
+       INSERT INTO orders (
+          id,"clientId","cartId",country,status,
+          "paymentMethod","orderKey","cartHash",
+          "shippingTotal","discountTotal","totalAmount",
+          "couponCode","couponType","discountValue",
+          "shippingService",
+          "dateCreated","datePaid","dateCompleted","dateCancelled",
+          "orderMeta",
+          "createdAt","updatedAt","organizationId",channel
+        ) VALUES (
+          $1,$2,$3,$4,$5,
+          $6,$7,$8,
+          $9,$10,$11,
+          $12,$13,$14,
+          $15,
+          $16,$17,$18,$19,
+          $20::jsonb,
+          NOW(),NOW(),$21,$22
+        )
+        RETURNING *`;
+
+      const vals = [
+        orderId,
+        summary.clientId,
+        summary.cartId,
+        summary.country,
+        orderStatus,
+        primaryMethodName,
+        orderKey,
+        cartHash,                 // post-reprice hash
+        shippingTotal,
+        discountTotal,
+        totalAmount,              // uses repriced subtotal
+        discountKind ? "POS" : null,
+        couponType,
+        discountValueArr,
+        "-",
+        new Date(),               // dateCreated
+        datePaid,
+        dateCompleted,
+        null,                     // dateCancelled
+        initialOrderMeta,
+        organizationId,
+        orderChannel,
+      ];
+
       const { rows: orderRows } = await tx.query(insertSql, vals);
       const order = orderRows[0];
 
@@ -828,22 +1034,20 @@ export async function POST(req: NextRequest) {
 
       await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
 
-
-      // ⬇️ Create revenue for this POS order
       await tx.query("COMMIT");
 
       // clear the paired customer display now that the cart is closed
       try { await emitIdleForCart(cartId); } catch (e) { console.warn("[cd][checkout->idle] emit failed", e); }
 
-      // ⬇️ Create revenue for this POS order
+      // Create revenue for this POS order
       try { await getRevenue(order.id, organizationId); } catch (e) { console.warn("[POS checkout][revenue] failed", e); }
 
-      // ⬇️ Capture platform fee for this POS order (since it begins as "paid")
+      // Platform fee
       try {
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (process.env.INTERNAL_API_SECRET) headers["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
-        else headers["x-local-invoke"] = "1"; // dev/staging fallback (matches change-status)
+        else headers["x-local-invoke"] = "1";
         const res = await fetch(feesUrl, {
           method: "POST",
           headers,
@@ -856,9 +1060,9 @@ export async function POST(req: NextRequest) {
         console.warn("[POS checkout][fees] failed", e);
       }
 
-      // ⬇️ Affiliate bonuses (referral + spending) for POS (mirrors change-status paid-like)
+      // Affiliate bonuses (referral + spending)
       try {
-        // Skip all affiliate awards for walk-in customers
+        // Skip for walk-in customers
         const { rows: [who] } = await pool.query(
           `SELECT
               LOWER(COALESCE("firstName", '')) AS "firstName",
@@ -872,7 +1076,6 @@ export async function POST(req: NextRequest) {
         const isWalkInCustomer =
           (who?.firstName === "walk-in") ||
           (typeof who?.username === "string" && who.username.startsWith("walkin-"));
-
 
         if (!isWalkInCustomer) {
           // 1) settings
@@ -1022,18 +1225,16 @@ export async function POST(req: NextRequest) {
               );
             }
           }
-        } // end !isWalkInCustomer
+        }
       } catch (e) {
         console.warn("[POS checkout][affiliate bonuses] failed", e);
       }
 
-      // ─────────────────────────────────────────────────────────────
       // Niftipay: if cashier chose Niftipay + provided network, create invoice
-      // ─────────────────────────────────────────────────────────────
       try {
-        // Use the already-read body instead of cloning the request
         const niftiReq = (rawBody?.niftipay ??
           undefined) as { chain?: string; asset?: string; amount?: number } | undefined;
+
         // Sum Niftipay split amount using method names (in case amount wasn't supplied)
         const methodIds = Array.from(new Set((rawBody?.payments ?? payments ?? [])
           .map((p: any) => String(p.methodId))));
@@ -1072,7 +1273,7 @@ export async function POST(req: NextRequest) {
                 lastName: c.lastName ?? null,
                 email: c.email ?? "user@trapyfy.com",
                 merchantId: organizationId,
-                reference: orderKey,        // use the newly created order's key
+                reference: orderKey,
               }),
             }
           );
@@ -1082,20 +1283,20 @@ export async function POST(req: NextRequest) {
                  SET "orderMeta" = COALESCE("orderMeta",'[]'::jsonb) || $1::jsonb,
                      "updatedAt" = NOW()
                WHERE id = $2`,
-              [JSON.stringify([nifData]), orderId]
+              [JSON.stringify([nifData]), order.id]
             );
           }
         }
       } catch (e) {
-        // Non-fatal: we still return the order; cashier can retry from the order page
+        // Non-fatal
         console.warn("[POS checkout][niftipay] invoice creation failed", {
           err: String(e),
           hasNifti: !!rawBody?.niftipay,
-          splitCount: Array.isArray(rawBody?.payments) ? rawBody.payments.length : 0,
+          splitCount: Array.isArray((rawBody as any)?.payments) ? (rawBody as any).payments.length : 0,
         });
       }
 
-      // ⬇️ POS status notifications (match normal orders)
+      // POS status notifications (match normal orders)
       try {
         const status = isParked ? "pending_payment" : "paid";
         const notifType = isParked ? "order_pending_payment" : "order_paid";
@@ -1151,7 +1352,7 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // If immediately paid, mark single-fire flag so "paid" won’t double notify later
+        // If immediately paid, mark single-fire flag
         if (!isParked) {
           await pool.query(
             `UPDATE orders
@@ -1163,7 +1364,7 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Kick the outbox so Telegram/in-app send immediately
+        // Kick the outbox
         try {
           if (process.env.INTERNAL_API_SECRET) {
             await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`, {
@@ -1180,12 +1381,14 @@ export async function POST(req: NextRequest) {
         console.warn("[POS checkout][notify] failed", e);
       }
 
-
       return NextResponse.json({ order }, { status: 201 });
     } catch (e) {
-      await tx.query("ROLLBACK");
+      await (async () => {
+        try { await (pool as any).query("ROLLBACK"); } catch {}
+      })();
       throw e;
     } finally {
+      try { (await (async () => {/* no-op */})()); } catch {}
       tx.release();
     }
   } catch (err: any) {

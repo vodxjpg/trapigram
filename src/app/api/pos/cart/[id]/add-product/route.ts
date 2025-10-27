@@ -1,4 +1,3 @@
-// src/app/api/pos/cart/[id]/add-product/route.ts
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -9,25 +8,12 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
-import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /* ─────────────────────────────────────────────────────────────
-   Small in-memory caches (per runtime)
+   Small in-memory caches (per runtime) for store country
   ───────────────────────────────────────────────────────────── */
-const TIER_TTL_MS = 120_000;      // 2 min – good for POS, lowers repeated tier calls
-const STORE_TTL_MS = 5 * 60_000;  // 5 min
-
-const tierCache = new Map<string, { at: number; data: Tier[] }>();
-async function getTiersCached(orgId: string): Promise<Tier[]> {
-  const now = Date.now();
-  const hit = tierCache.get(orgId);
-  if (hit && now - hit.at < TIER_TTL_MS) return hit.data;
-  const data = (await tierPricing(orgId)) as Tier[];
-  tierCache.set(orgId, { at: now, data });
-  return data;
-}
-
+const STORE_TTL_MS = 5 * 60_000; // 5 min
 const storeCountryCache = new Map<string, { at: number; country: string | null }>();
 async function getStoreCountryCached(storeId: string, organizationId: string): Promise<string | null> {
   const now = Date.now();
@@ -43,8 +29,7 @@ async function getStoreCountryCached(storeId: string, organizationId: string): P
   try {
     const addr = typeof rows[0]?.address === "string" ? JSON.parse(rows[0].address) : rows[0]?.address;
     if (addr?.country && typeof addr.country === "string") country = String(addr.country).toUpperCase();
-  } catch { /* noop */ }
-
+  } catch {}
   storeCountryCache.set(key, { at: now, country });
   return country;
 }
@@ -67,10 +52,7 @@ async function withIdempotency(
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
     const r = await exec();
-    return NextResponse.json(r.body, {
-      status: r.status,
-      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-    });
+    return NextResponse.json(r.body, { status: r.status, headers: { ...BASE_HEADERS, ...(r.headers ?? {}) } });
   }
   const method = req.method;
   const path = new URL(req.url).pathname;
@@ -90,23 +72,14 @@ async function withIdempotency(
         );
         await c.query("COMMIT");
         if (rows[0]) {
-          return NextResponse.json(rows[0].response, {
-            status: rows[0].status,
-            headers: BASE_HEADERS,
-          });
+          return NextResponse.json(rows[0].response, { status: rows[0].status, headers: BASE_HEADERS });
         }
-        return NextResponse.json({ error: "Idempotency replay but no record" }, {
-          status: 409,
-          headers: BASE_HEADERS,
-        });
+        return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409, headers: BASE_HEADERS });
       }
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
         const r = await exec();
-        return NextResponse.json(r.body, {
-          status: r.status,
-          headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-        });
+        return NextResponse.json(r.body, { status: r.status, headers: { ...BASE_HEADERS, ...(r.headers ?? {}) } });
       }
       throw e;
     }
@@ -116,10 +89,7 @@ async function withIdempotency(
       [key, r.status, r.body]
     );
     await c.query("COMMIT");
-    return NextResponse.json(r.body, {
-      status: r.status,
-      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-    });
+    return NextResponse.json(r.body, { status: r.status, headers: { ...BASE_HEADERS, ...(r.headers ?? {}) } });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -139,38 +109,6 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   if (!channel) return null;
   const m = /^pos-([^-\s]+)-/i.exec(channel);
   return m ? m[1] : null;
-}
-
-function pickTierForClient(
-  tiers: Tier[],
-  country: string,
-  productId: string,
-  variationId: string | null,
-  clientId?: string | null,
-): Tier | null {
-  const CC = (country || "").toUpperCase();
-  const inTier = (t: Tier) =>
-    t.active === true &&
-    t.countries.some((c) => (c || "").toUpperCase() === CC) &&
-    t.products.some(
-      (p) =>
-        (p.productId && p.productId === productId) ||
-        (!!variationId && p.variationId === variationId),
-    );
-  const candidates = tiers.filter(inTier);
-  if (!candidates.length) return null;
-
-  const targets = (t: Tier): string[] =>
-    ((((t as any).clients as string[] | undefined) ??
-      ((t as any).customers as string[] | undefined) ??
-      []) as string[]).filter(Boolean);
-
-  if (clientId) {
-    const targeted = candidates.find((t) => targets(t).includes(clientId));
-    if (targeted) return targeted;
-  }
-  const global = candidates.find((t) => targets(t).length === 0);
-  return global ?? null;
 }
 
 /** Inventory check (schema-aware).
@@ -195,61 +133,6 @@ async function readInventoryFast(
   };
 }
 
-/* Variant-title helpers (tolerant of many shapes & filters UUID-looking strings) */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function readLabelish(x: any): string | null {
-  if (x == null) return null;
-  if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
-  if (typeof x === "number" || typeof x === "boolean") return String(x);
-  if (typeof x === "object") {
-    const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
-    for (const k of keys) {
-      if (x[k] != null) {
-        const v = readLabelish(x[k]);
-        if (v) return v;
-      }
-    }
-  }
-  return null;
-}
-
-function labelsFromAttributes(attrs: any): string[] {
-  const out: string[] = [];
-  const push = (v: string | null) => { if (v && !UUID_RE.test(v)) out.push(v); };
-
-  try {
-    if (Array.isArray(attrs)) {
-      for (const it of attrs) {
-        const v = readLabelish(it?.value) ?? readLabelish(it?.optionName) ?? readLabelish(it);
-        push(v);
-      }
-      return [...new Set(out)];
-    }
-
-    if (attrs && typeof attrs === "object") {
-      for (const [k, v] of Object.entries(attrs)) {
-        const val = readLabelish((v as any)?.value) ?? readLabelish((v as any)?.optionName) ?? readLabelish(v);
-        if (val) {
-          const keyNice = UUID_RE.test(k) ? null : (k || "").trim();
-          push(keyNice ? `${keyNice}: ${val}` : val);
-        }
-      }
-      return [...new Set(out)];
-    }
-
-    push(readLabelish(attrs));
-    return [...new Set(out)];
-  } catch {
-    return [];
-  }
-}
-
-function formatVariationTitle(parentTitle: string, attributes: any): string {
-  const labels = labelsFromAttributes(attributes);
-  return labels.length ? `${parentTitle} - ${labels.join(" / ")}` : parentTitle;
-}
-
 /** Swallow emitter timeouts & errors, never block request */
 function withTimeout<T>(p: Promise<T>, ms: number) {
   return Promise.race([
@@ -257,8 +140,10 @@ function withTimeout<T>(p: Promise<T>, ms: number) {
     new Promise<never>((_, rej) => setTimeout(() => rej(new Error("emit-timeout")), ms)),
   ]);
 }
-function fireAndForget(p: Promise<any>) {
-  p.catch(() => { }); // silence
+function fireAndForget(p: Promise<any>) { p.catch(() => {}); }
+
+function encodeServerTiming(marks: Array<[string, number]>): string {
+  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 }
 
 /* ───────────────────────────────────────────────────────────── */
@@ -303,7 +188,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-      // store country (cached)
+      // store country (cached) — used for base-price fallback only
       let storeCountry: string | null = null;
       const storeId = parseStoreIdFromChannel(channel);
       if (storeId) {
@@ -311,7 +196,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mark("store_lookup");
       }
 
-      // resolve base price (+ affiliate flag)
+      // resolve base unit price (+ affiliate flag)
       let basePrice: number, isAffiliate: boolean;
       try {
         const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
@@ -404,59 +289,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mark("affiliate_debit");
       }
 
-      // upsert line + tier price (normal only)
-      let quantity = body.quantity + (existing[0]?.quantity ?? 0);
-      let unitPrice = basePrice;
-
-      if (!isAffiliate) {
-        const tiers = await getTiersCached(organizationId);
-        mark("tier_load");
-
-        const tier = pickTierForClient(tiers, country, body.productId, variationId, clientId);
-        if (tier) {
-          const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
-          const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-
-          // Split the SUM so indexes can be used
-          const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
-            client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
-              [cartId, tierProdIds],
-            ),
-            client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
-              [cartId, tierVarIds],
-            ),
-          ]);
-          mark("tier_qty_sum");
-
-          const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
-          const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
-          const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
-          if (tierPrice != null && tierPrice !== basePrice) {
-            unitPrice = tierPrice;
-
-            // Split the UPDATE as well (avoid OR)
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierProdIds],
-            );
-            await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierVarIds],
-            );
-            mark("tier_update_lines");
-          }
-        }
-      }
+      // upsert line (NO tier logic here — use basePrice only)
+      const quantity = body.quantity + (existing[0]?.quantity ?? 0);
+      const unitPrice = basePrice;
 
       if (existing.length) {
         await client.query(
@@ -488,7 +323,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
-      // FAST cart hash (aggregate instead of hashing row JSON)
+      // FAST cart hash (aggregate)
       const { rows: hv } = await client.query(
         `SELECT COUNT(*)::int AS n,
                 COALESCE(SUM(quantity),0)::int AS q,
@@ -500,24 +335,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const hash = crypto.createHash("sha256")
         .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
         .digest("hex");
-      await client.query(
-        `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
-        [hash, cartId]
-      );
+      await client.query(`UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`, [hash, cartId]);
       mark("hash_update");
 
       await client.query("COMMIT");
       mark("tx_commit");
 
-      // Fire-and-forget display emit (quiet + timeout budget)
+      // Fire-and-forget display emit
       try {
         setTimeout(() => {
           fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
         }, 0);
-      } catch { }
+      } catch {}
       mark("emit_display_sched");
 
-      // Single-roundtrip snapshot with proper variant titles
+      // Single-roundtrip snapshot
       const { rows: snap } = await pool.query(
         `SELECT 
            p.id                            AS pid,
@@ -561,6 +393,52 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
       mark("snapshot_query");
 
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const readLabelish = (x: any): string | null => {
+        if (x == null) return null;
+        if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
+        if (typeof x === "number" || typeof x === "boolean") return String(x);
+        if (typeof x === "object") {
+          const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
+          for (const k of keys) {
+            if ((x as any)[k] != null) {
+              const v = readLabelish((x as any)[k]);
+              if (v) return v;
+            }
+          }
+        }
+        return null;
+      };
+      const labelsFromAttributes = (attrs: any): string[] => {
+        const out: string[] = [];
+        const push = (v: string | null) => { if (v && !UUID_RE.test(v)) out.push(v); };
+        try {
+          if (Array.isArray(attrs)) {
+            for (const it of attrs) {
+              const v = readLabelish(it?.value) ?? readLabelish(it?.optionName) ?? readLabelish(it);
+              push(v);
+            }
+            return [...new Set(out)];
+          }
+          if (attrs && typeof attrs === "object") {
+            for (const [k, v] of Object.entries(attrs)) {
+              const val = readLabelish((v as any)?.value) ?? readLabelish((v as any)?.optionName) ?? readLabelish(v);
+              if (val) {
+                const keyNice = UUID_RE.test(k) ? null : (k || "").trim();
+                push(keyNice ? `${keyNice}: ${val}` : val);
+              }
+            }
+            return [...new Set(out)];
+          }
+          push(readLabelish(attrs));
+          return [...new Set(out)];
+        } catch { return []; }
+      };
+      const formatVariationTitle = (parentTitle: string, attributes: any): string => {
+        const labels = labelsFromAttributes(attributes);
+        return labels.length ? `${parentTitle} - ${labels.join(" / ")}` : parentTitle;
+      };
+
       const lines = snap.map((r: any) => {
         const unitPrice = Number(r.unitPrice);
         const title = r.isAffiliate
@@ -593,7 +471,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         },
       };
     } catch (err: any) {
-      try { if (client) await client.query("ROLLBACK"); } catch { }
+      try { if (client) await client.query("ROLLBACK"); } catch {}
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
@@ -601,11 +479,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       console.error("[POS POST /pos/cart/:id/add-product]", err);
       return { status: 500, body: { error: err.message ?? "Internal server error" }, headers: BASE_HEADERS };
     } finally {
-      try { if (client) client.release(); } catch { }
+      try { if (client) client.release(); } catch {}
     }
   });
-}
-
-function encodeServerTiming(marks: Array<[string, number]>): string {
-  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 }
