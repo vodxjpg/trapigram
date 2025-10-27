@@ -6,7 +6,7 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { resolveUnitPrice } from "@/lib/pricing";
+import { resolveUnitPrice } from "@/lib/pricing2";
 import { adjustStock } from "@/lib/stock";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
