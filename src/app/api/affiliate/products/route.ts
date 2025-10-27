@@ -5,9 +5,10 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
 
-/* Safe JSON parser: accepts object, stringified JSON, null/undefined */
+/*─────────────────────────────────────────────────────────────────
+  Robust JSON helpers + strict split/merge for points-by-level
+─────────────────────────────────────────────────────────────────*/
 function jsonMaybe<T>(val: unknown): T | null {
   if (val == null) return null;
   if (typeof val === "string") {
@@ -20,6 +21,65 @@ function jsonMaybe<T>(val: unknown): T | null {
   return val as T;
 }
 
+type PointsByLvl = Record<
+  string, // levelId or "default"
+  Record<
+    string, // country code
+    { regular: number; sale: number | null }
+  >
+>;
+
+type RegularMap = Record<string, Record<string, number>>;
+type SaleMap = Record<string, Record<string, number>>;
+
+/** Merge DB maps -> UI map */
+function mergePointsStrict(
+  regular: RegularMap | null | undefined,
+  sale: SaleMap | null | undefined,
+): PointsByLvl {
+  const reg = regular ?? {};
+  const sal = sale ?? {};
+  const levelIds = new Set<string>([...Object.keys(reg), ...Object.keys(sal)]);
+  const out: PointsByLvl = {};
+  for (const lvl of levelIds) {
+    out[lvl] = out[lvl] ?? {};
+    const countries = new Set<string>([
+      ...Object.keys(reg[lvl] ?? {}),
+      ...Object.keys(sal[lvl] ?? {}),
+    ]);
+    for (const cc of countries) {
+      const r = reg[lvl]?.[cc] ?? 0;
+      const s = sal[lvl]?.[cc];
+      out[lvl][cc] = { regular: Number.isFinite(r) ? r : 0, sale: s ?? null };
+    }
+  }
+  return out;
+}
+
+/** Split UI map -> DB maps (sale null => omit; returns null if no sale anywhere) */
+function splitPointsStrict(
+  map: PointsByLvl,
+): { regularPoints: RegularMap; salePoints: SaleMap | null } {
+  const regularPoints: RegularMap = {};
+  const salePoints: SaleMap = {};
+  let hasAnySale = false;
+
+  for (const [lvl, byCountry] of Object.entries(map || {})) {
+    regularPoints[lvl] = regularPoints[lvl] ?? {};
+    for (const [cc, pts] of Object.entries(byCountry || {})) {
+      const r = Number(pts?.regular ?? 0);
+      regularPoints[lvl][cc] = Number.isFinite(r) && r >= 0 ? r : 0;
+      if (pts?.sale === 0 || typeof pts?.sale === "number") {
+        salePoints[lvl] = salePoints[lvl] ?? {};
+        salePoints[lvl][cc] = pts.sale!;
+        hasAnySale = true;
+      }
+    }
+  }
+  return { regularPoints, salePoints: hasAnySale ? salePoints : null };
+}
+
+/*──────────────── Zod (unchanged shapes) ────────────────*/
 const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const countryMap = z.record(z.string(), ptsObj);
 const pointsByLvl = z.record(z.string(), countryMap);
@@ -90,8 +150,7 @@ async function uniqueSku(base: string, orgId: string) {
 }
 
 /*==================================================================
-  GET   – fixed “IN ()” syntax error when there are no products
-         + robust JSON parsing for points/cost
+  GET   – fixed IN () + strict JSON + strict merge
   =================================================================*/
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -150,10 +209,9 @@ export async function GET(req: NextRequest) {
   }
 
   const products = rows.map((r) => {
-    const regular = jsonMaybe<Record<string, Record<string, number>>>(r.regularPoints) ?? {};
-    const sale = jsonMaybe<Record<string, Record<string, number>> | null>(r.salePoints);
+    const regular = jsonMaybe<RegularMap>(r.regularPoints) ?? {};
+    const sale = jsonMaybe<SaleMap | null>(r.salePoints) ?? null;
     const cost = jsonMaybe<Record<string, number>>(r.cost) ?? {};
-
     return {
       id: r.id,
       title: r.title,
@@ -161,7 +219,7 @@ export async function GET(req: NextRequest) {
       sku: r.sku,
       status: r.status,
       productType: r.productType,
-      pointsPrice: mergePointsByLevel(regular, sale),
+      pointsPrice: mergePointsStrict(regular, sale),
       cost,
       stock: byProductStock[r.id] ?? {},
       createdAt: r.createdAt,
@@ -172,7 +230,7 @@ export async function GET(req: NextRequest) {
 }
 
 /*==================================================================
-  POST
+  POST – use strict split to guarantee default persistence
   =================================================================*/
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
@@ -192,14 +250,14 @@ export async function POST(req: NextRequest) {
   const sku = await uniqueSku(body.sku || `SKU-${uuidv4().slice(0, 8)}`, organizationId);
 
   const productId = uuidv4();
-  const { regularPoints, salePoints } = splitPointsByLevel(body.pointsPrice);
+  const { regularPoints, salePoints } = splitPointsStrict(body.pointsPrice);
 
   await db
     .insertInto("affiliateProducts")
     .values({
       id: productId,
       organizationId,
-      tenantId, /* FIX */
+      tenantId,
       title: body.title,
       description: body.description ?? null,
       image: body.image ?? null,
@@ -241,8 +299,8 @@ export async function POST(req: NextRequest) {
 
   if (body.productType === "variable" && body.variations?.length) {
     for (const v of body.variations) {
-      const srcMap = v.prices ?? v.pointsPrice;
-      const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
+      const srcMap = v.prices ?? v.pointsPrice ?? {};
+      const { regularPoints: vr, salePoints: vs } = splitPointsStrict(srcMap as PointsByLvl);
 
       await db
         .insertInto("affiliateProductVariations")
@@ -252,8 +310,8 @@ export async function POST(req: NextRequest) {
           attributes: JSON.stringify(v.attributes),
           sku: v.sku,
           image: v.image ?? null,
-          regularPoints,
-          salePoints,
+          regularPoints: vr,
+          salePoints: vs,
           cost: v.cost ?? {},
           minLevelId: v.minLevelId ?? null,
           createdAt: new Date(),
@@ -297,7 +355,7 @@ export async function POST(req: NextRequest) {
         country: row.country,
         quantity: row.quantity,
         organizationId,
-        tenantId, /* FIX */
+        tenantId,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
