@@ -1,3 +1,4 @@
+// src/app/(dashboard)/affiliates/products/components/affiliate-product-form.tsx
 /* ────────────────────────────────────────────────────────────────
    src/app/(dashboard)/affiliates/products/components/affiliate-product-form.tsx
 ───────────────────────────────────────────────────────────────── */
@@ -178,19 +179,52 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         },
   });
 
+  /* Ensure RHF knows about pointsPrice (register once) */
+  useEffect(() => {
+    form.register("pointsPrice" as const);
+  }, [form]);
+
   /* never pass undefined to children */
   const emptyPoints: PointsByLvl = useMemo(() => ({ default: {} }), []);
   const watchedPoints = (form.watch("pointsPrice") as PointsByLvl | undefined) ?? emptyPoints;
 
-  /* ensure pointsPrice exists (avoid Object.keys on undefined) */
+  /* robust init: ensure pointsPrice contains all countries for default + levels; do not overwrite values */
   useEffect(() => {
-    if (!countries.length || !levels.length) return;
-    const curr = form.getValues("pointsPrice") as unknown;
-    const hasKeys =
-      !!curr && typeof curr === "object" && !Array.isArray(curr) && Object.keys(curr as object).length > 0;
+    if (!countries.length) return;
+    const curr = (form.getValues("pointsPrice") as PointsByLvl | undefined) ?? { default: {} };
 
-    if (!hasKeys) {
-      form.setValue("pointsPrice", blankPtsFor(countries, levels), { shouldDirty: false });
+    // Build a patched copy that adds any missing level/country entries, preserving existing edits
+    const patched: PointsByLvl = { ...curr };
+    let changed = false;
+
+    // Ensure default exists
+    if (!patched.default) {
+      patched.default = {};
+      changed = true;
+    }
+    countries.forEach((c) => {
+      if (!patched.default[c]) {
+        patched.default[c] = { regular: 0, sale: null };
+        changed = true;
+      }
+    });
+
+    // Ensure each known level key exists with all countries
+    levels.forEach((lvl) => {
+      if (!patched[lvl.id]) {
+        patched[lvl.id] = {};
+        changed = true;
+      }
+      countries.forEach((c) => {
+        if (!patched[lvl.id][c]) {
+          patched[lvl.id][c] = { regular: 0, sale: null };
+          changed = true;
+        }
+      });
+    });
+
+    if (changed) {
+      form.setValue("pointsPrice", patched, { shouldDirty: false });
     }
   }, [countries, levels, form]);
 
@@ -238,7 +272,13 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       for (const [c, qtyMaybe] of Object.entries(byCountry)) {
         const qty = Number(qtyMaybe ?? 0);
         if (Number.isFinite(qty) && qty > 0) {
-          arr.push({ warehouseId: wId, affiliateProductId: productId || "TEMP", variationId: null, country: c, quantity: qty });
+          arr.push({
+            warehouseId: wId,
+            affiliateProductId: productId || "TEMP",
+            variationId: null,
+            country: c,
+            quantity: qty,
+          });
         }
       }
     }
@@ -262,15 +302,25 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       const url = productId ? `/api/affiliate/products/${productId}` : "/api/affiliate/products";
       const method = productId ? "PATCH" : "POST";
 
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg = Array.isArray(data?.error) ? data.error.map((e: any) => e.message).join(" • ") : data.error || "Failed to save";
+        const msg = Array.isArray(data?.error)
+          ? data.error.map((e: any) => e.message).join(" • ")
+          : data.error || "Failed to save";
         toast.error(msg);
         return;
       }
 
-      swrMutate((key) => typeof key === "string" && key.startsWith("/api/affiliate/products"), undefined, { revalidate: true });
+      swrMutate(
+        (key) => typeof key === "string" && key.startsWith("/api/affiliate/products"),
+        undefined,
+        { revalidate: true },
+      );
       toast.success(productId ? "Product updated" : "Product created");
       router.push("/affiliates/products");
       router.refresh();
@@ -284,7 +334,11 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className={`grid w-full ${form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"}`}>
+          <TabsList
+            className={`grid w-full ${
+              form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"
+            }`}
+          >
             <TabsTrigger value="general">General</TabsTrigger>
             {form.watch("productType") === "simple" && <TabsTrigger value="points">Points</TabsTrigger>}
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
@@ -306,14 +360,31 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                   <div className="space-y-4">
                     <FormLabel>Featured Image</FormLabel>
                     {imgPreview ? (
-                      <Image src={imgPreview} alt="preview" width={400} height={400} className="rounded-md object-cover w-full h-64" />
+                      <Image
+                        src={imgPreview}
+                        alt="preview"
+                        width={400}
+                        height={400}
+                        className="rounded-md object-cover w-full h-64"
+                      />
                     ) : (
                       <div className="border border-dashed h-64 flex items-center justify-center rounded-md">
                         <span className="text-sm text-muted-foreground">No image</span>
                       </div>
                     )}
-                    <Input type="file" accept="image/*" className="hidden" id="aff-img-input" onChange={handleUpload} />
-                    <Button type="button" variant="outline" onClick={() => document.getElementById("aff-img-input")?.click()} className="w-full">
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="aff-img-input"
+                      onChange={handleUpload}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => document.getElementById("aff-img-input")?.click()}
+                      className="w-full"
+                    >
                       {imgPreview ? "Change Image" : "Upload Image"}
                     </Button>
                   </div>
@@ -339,7 +410,11 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Product Type</FormLabel>
-                          <select className="w-full border rounded-md px-3 py-2" value={field.value} onChange={field.onChange}>
+                          <select
+                            className="w-full border rounded-md px-3 py-2"
+                            value={field.value}
+                            onChange={field.onChange}
+                          >
                             <option value="simple">Simple</option>
                             <option value="variable">Variable</option>
                           </select>
@@ -364,7 +439,9 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                   </div>
                 </div>
 
-                {productType === "simple" && <LevelRequirementSelect value={minLevel} onChange={setMinLevel} />}
+                {productType === "simple" && (
+                  <LevelRequirementSelect value={minLevel} onChange={setMinLevel} />
+                )}
 
                 <FormField
                   control={form.control}
@@ -373,7 +450,14 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     <FormItem className="col-span-full">
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <ReactQuill theme="snow" modules={quillModules} formats={quillFormats} value={field.value || ""} onChange={field.onChange} className="min-h-[200px]" />
+                        <ReactQuill
+                          theme="snow"
+                          modules={quillModules}
+                          formats={quillFormats}
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          className="min-h-[200px]"
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -391,7 +475,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                 countries={countries}
                 levels={levels}
                 value={watchedPoints}
-                onChange={(m) => form.setValue("pointsPrice", m)}
+                onChange={(m) => form.setValue("pointsPrice", m, { shouldDirty: true })}
                 costData={costs}
                 onCostChange={setCosts}
               />
@@ -434,14 +518,24 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     </FormItem>
                   )}
                 />
-                {manageStock && <StockManagement warehouses={warehouses} stockData={stockData} onStockChange={(data) => setStockData(data)} />}
+                {manageStock && (
+                  <StockManagement
+                    warehouses={warehouses}
+                    stockData={stockData}
+                    onStockChange={(data) => setStockData(data)}
+                  />
+                )}
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* ATTRIBUTES */}
           <TabsContent value="attributes" className="space-y-6">
-            <ProductAttributes attributes={attributes} onAttributesChange={setAttributes} productType={productType} />
+            <ProductAttributes
+              attributes={attributes}
+              onAttributesChange={setAttributes}
+              productType={productType}
+            />
           </TabsContent>
 
           {/* VARIATIONS */}
@@ -458,7 +552,11 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         </Tabs>
 
         <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" onClick={() => router.push("/affiliates/products")}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push("/affiliates/products")}
+          >
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>

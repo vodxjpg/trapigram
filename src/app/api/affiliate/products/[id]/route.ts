@@ -1,46 +1,111 @@
 // ==================================================================
-//  src/app/api/affiliate/products/[id]/route.ts  – FULL REWRITE
+//  src/app/api/affiliate/products/[id]/route.ts
 // ==================================================================
 export const runtime = "nodejs";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
+
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { v4 as uuidv4 } from "uuid";
-import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
+
+/*─────────────────────────────────────────────────────────────────
+  Robust JSON helpers + strict split/merge for points-by-level
+─────────────────────────────────────────────────────────────────*/
+function jsonMaybe<T>(val: unknown): T | null {
+  if (val == null) return null;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val) as T;
+    } catch {
+      return null;
+    }
+  }
+  return val as T;
+}
+
+type PointsByLvl = Record<
+  string,
+  Record<string, { regular: number; sale: number | null }>
+>;
+type RegularMap = Record<string, Record<string, number>>;
+type SaleMap = Record<string, Record<string, number>>;
+
+function mergePointsStrict(
+  regular: RegularMap | null | undefined,
+  sale: SaleMap | null | undefined,
+): PointsByLvl {
+  const reg = regular ?? {};
+  const sal = sale ?? {};
+  const levelIds = new Set<string>([...Object.keys(reg), ...Object.keys(sal)]);
+  const out: PointsByLvl = {};
+  for (const lvl of levelIds) {
+    out[lvl] = out[lvl] ?? {};
+    const countries = new Set<string>([
+      ...Object.keys(reg[lvl] ?? {}),
+      ...Object.keys(sal[lvl] ?? {}),
+    ]);
+    for (const cc of countries) {
+      const r = reg[lvl]?.[cc] ?? 0;
+      const s = sal[lvl]?.[cc];
+      out[lvl][cc] = { regular: Number.isFinite(r) ? r : 0, sale: s ?? null };
+    }
+  }
+  return out;
+}
+
+function splitPointsStrict(
+  map: PointsByLvl,
+): { regularPoints: RegularMap; salePoints: SaleMap | null } {
+  const regularPoints: RegularMap = {};
+  const salePoints: SaleMap = {};
+  let hasAnySale = false;
+
+  for (const [lvl, byCountry] of Object.entries(map || {})) {
+    regularPoints[lvl] = regularPoints[lvl] ?? {};
+    for (const [cc, pts] of Object.entries(byCountry || {})) {
+      const r = Number(pts?.regular ?? 0);
+      regularPoints[lvl][cc] = Number.isFinite(r) && r >= 0 ? r : 0;
+      if (pts?.sale === 0 || typeof pts?.sale === "number") {
+        salePoints[lvl] = salePoints[lvl] ?? {};
+        salePoints[lvl][cc] = pts.sale!;
+        hasAnySale = true;
+      }
+    }
+  }
+  return { regularPoints, salePoints: hasAnySale ? salePoints : null };
+}
+
+/* Deep merge of UI maps (used during PATCH) */
+function deepMergePoints(base: PointsByLvl, delta: PointsByLvl): PointsByLvl {
+  const out: PointsByLvl = JSON.parse(JSON.stringify(base || {}));
+  for (const [lvl, countries] of Object.entries(delta || {})) {
+    out[lvl] ??= {};
+    for (const [cc, pts] of Object.entries(countries || {})) {
+      const prev = out[lvl][cc] ?? { regular: 0, sale: null };
+      out[lvl][cc] = {
+        regular: typeof pts?.regular === "number" ? pts.regular : prev.regular,
+        sale: pts?.sale === null || typeof pts?.sale === "number" ? pts.sale : prev.sale,
+      };
+    }
+  }
+  return out;
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
-const ptsObj       = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const countryMap   = z.record(z.string(), ptsObj);          // country ➜ points
-const pointsByLvl  = z.record(z.string(), countryMap);      // levelId ➜ country map
+const ptsObj = z.object({
+  regular: z.number().min(0),
+  sale: z.number().nullable(),
+});
+const countryMap = z.record(z.string(), ptsObj);
+const pointsByLvl = z.record(z.string(), countryMap);
 
 const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 const costMap = z.record(z.string(), z.number().min(0));
 
-function splitPoints(map: Record<string, { regular: number; sale: number | null }>) {
-  const regular: Record<string, number> = {};
-  const sale: Record<string, number> = {};
-  for (const [c, v] of Object.entries(map)) {
-    regular[c] = v.regular;
-    if (v.sale != null) sale[c] = v.sale;
-  }
-  return { regularPoints: regular, salePoints: Object.keys(sale).length ? sale : null };
-}
-function mergePoints(
-  regular: Record<string, number> | null,
-  sale: Record<string, number> | null,
-) {
-  const out: Record<string, { regular: number; sale: number | null }> = {};
-  const reg = regular || {};
-  const sal = sale || {};
-  for (const [c, v] of Object.entries(reg)) out[c] = { regular: Number(v), sale: null };
-  for (const [c, v] of Object.entries(sal))
-    out[c] = { ...(out[c] || { regular: 0, sale: null }), sale: Number(v) };
-  return out;
-}
-
-/* ---------------- schema fragments ----------------------------- */
 const variationPatch = z
   .object({
     id: z.string(),
@@ -58,7 +123,7 @@ const variationPatch = z
 const attrInput = z.object({
   id: z.string(),
   selectedTerms: z.array(z.string()),
-  useForVariations: z.boolean().optional(), // round‑trip only
+  useForVariations: z.boolean().optional(),
 });
 
 const patchSchema = z.object({
@@ -71,7 +136,7 @@ const patchSchema = z.object({
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
   pointsPrice: pointsByLvl.optional(),
-  cost: costMap.optional(), 
+  cost: z.record(z.string(), z.number().min(0)).optional(),
   attributes: z.array(attrInput).optional(),
   minLevelId: z.string().uuid().nullable().optional(),
   warehouseStock: z
@@ -79,7 +144,7 @@ const patchSchema = z.object({
       z.object({
         warehouseId: z.string(),
         affiliateProductId: z.string(),
-        variationId: z.string().nullable(), // legacy – ignored on write
+        variationId: z.string().nullable(),
         country: z.string(),
         quantity: z.number().min(0),
       }),
@@ -89,59 +154,50 @@ const patchSchema = z.object({
 });
 
 /* =================================================================
-   GET  – fetch single affiliate product (incl. variation stock)
+   GET  – fetch single affiliate product (incl. variation stock)
    ================================================================= */
-   export async function GET(
-    req: NextRequest,
-    ctx: { params: Promise<{ id: string }> },
-  ) {
-    const { id } = await ctx.params;
-  
-    const context = await getContext(req);
-    if (context instanceof NextResponse) return context;
-    const { organizationId } = context;
-  
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const { id } = await context.params;
 
-  /* core row */
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   const product = await db
     .selectFrom("affiliateProducts")
     .selectAll()
     .where("id", "=", id)
     .where("organizationId", "=", organizationId)
     .executeTakeFirst();
-  if (!product) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  /* variations */
+  if (!product) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const variations = await db
     .selectFrom("affiliateProductVariations")
     .selectAll()
     .where("productId", "=", product.id)
     .execute();
 
-  /* stock rows (affiliateVariationId FK) */
   const stockRows = await db
     .selectFrom("warehouseStock")
     .select(["warehouseId", "affiliateVariationId", "country", "quantity"])
     .where("affiliateProductId", "=", product.id)
     .execute();
 
-  /* build stock maps */
   const variationStock: Record<string, ReturnType<typeof stockMap.parse>> = {};
-  const baseStock: Record<string, Record<string, number>> = {};
-
   for (const row of stockRows) {
-    if (row.affiliateVariationId) {
-      const vid = row.affiliateVariationId;
-      if (!variationStock[vid]) variationStock[vid] = {};
-      if (!variationStock[vid][row.warehouseId]) variationStock[vid][row.warehouseId] = {};
-      variationStock[vid][row.warehouseId][row.country] = row.quantity;
-    } else {
-      if (!baseStock[row.warehouseId]) baseStock[row.warehouseId] = {};
-      baseStock[row.warehouseId][row.country] = row.quantity;
-    }
+    if (!row.affiliateVariationId) continue;
+    const vid = row.affiliateVariationId;
+    if (!variationStock[vid]) variationStock[vid] = {};
+    if (!variationStock[vid][row.warehouseId]) variationStock[vid][row.warehouseId] = {};
+    variationStock[vid][row.warehouseId][row.country] = row.quantity;
   }
 
-  /* attributes with selected terms */
   const attrRows = await db
     .selectFrom("productAttributeValues")
     .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
@@ -176,32 +232,43 @@ const patchSchema = z.object({
     useForVariations: product.productType === "variable",
   }));
 
-  const mappedVariations = variations.map(v => {
-    // rebuild the full level→country→{regular,sale} map:
-    const pointsPrice = mergePointsByLevel(
-      v.regularPoints as Record<string, Record<string, number>>,
-      v.salePoints   as Record<string, Record<string, number>> | null
-    );
-  
+  const mappedVariations = variations.map((v) => {
+    const vRegular = jsonMaybe<RegularMap>(v.regularPoints) ?? {};
+    const vSale = jsonMaybe<SaleMap | null>(v.salePoints) ?? null;
+    const vAttrs =
+      typeof v.attributes === "string"
+        ? jsonMaybe<Record<string, string>>(v.attributes) ?? {}
+        : (v.attributes as any);
+    const vCost =
+      typeof v.cost === "string" ? jsonMaybe<Record<string, number>>(v.cost) ?? {} : (v.cost as any) ?? {};
+
+    const pointsPrice = mergePointsStrict(vRegular, vSale);
+
     return {
       id: v.id,
-      attributes: v.attributes,
+      attributes: vAttrs,
       sku: v.sku,
       image: v.image,
-      // this becomes an object keyed by level IDs
-      prices:     pointsPrice,
-      pointsPrice, 
-      cost:       typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
+      prices: pointsPrice,
+      pointsPrice,
+      cost: vCost,
       minLevelId: v.minLevelId ?? null,
-      stock:      variationStock[v.id] || {},
+      stock: variationStock[v.id] || {},
     };
   });
+
+  const pRegular = jsonMaybe<RegularMap>(product.regularPoints) ?? {};
+  const pSale = jsonMaybe<SaleMap | null>(product.salePoints) ?? null;
+  const pCost =
+    typeof product.cost === "string"
+      ? jsonMaybe<Record<string, number>>(product.cost) ?? {}
+      : (product.cost as any) ?? {};
 
   return NextResponse.json({
     product: {
       ...product,
-      pointsPrice: mergePointsByLevel(product.regularPoints, product.salePoints),
-      cost: typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost ?? {}, // ← NEW
+      pointsPrice: mergePointsStrict(pRegular, pSale),
+      cost: pCost,
       warehouseStock: stockRows.filter((r) => !r.affiliateVariationId),
       variations: mappedVariations,
       attributes: attributesOut,
@@ -210,32 +277,34 @@ const patchSchema = z.object({
 }
 
 /* =================================================================
-   PATCH – update affiliate product (core, attributes, variations, stock)
+   PATCH – deep-merge incoming points with existing, strict split
    ================================================================= */
-   export async function PATCH(
-    req: NextRequest,
-    ctx: { params: Promise<{ id: string }> },
-  ) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id: productId } = await context.params;
+
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId, tenantId } = ctx;
+
+    let body: z.infer<typeof patchSchema>;
     try {
-      const { id: productId } = await ctx.params;
-  
-      const context = await getContext(req);
-      if (context instanceof NextResponse) return context;
-      const { organizationId, tenantId } = context;
-  
-      let body: z.infer<typeof patchSchema>;
-      try {
-        body = patchSchema.parse(await req.json());
-      } catch (err) {
-        if (err instanceof z.ZodError)
-          return NextResponse.json({ error: err.errors }, { status: 400 });
-        throw err;
+      body = patchSchema.parse(await req.json());
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return NextResponse.json({ error: err.errors }, { status: 400 });
       }
-      if (Object.keys(body).length === 0)
-        return NextResponse.json({ message: "Nothing to update" });
-  
-      await db.transaction().execute(async (trx) => {
-      /* ---------------- core fields ---------------- */
+      throw err;
+    }
+
+    if (Object.keys(body).length === 0) {
+      return NextResponse.json({ message: "Nothing to update" });
+    }
+
+    await db.transaction().execute(async (trx) => {
       const core: Record<string, unknown> = {};
       if (body.title !== undefined) core.title = body.title;
       if (body.description !== undefined) core.description = body.description;
@@ -245,13 +314,28 @@ const patchSchema = z.object({
       if (body.productType !== undefined) core.productType = body.productType;
       if (body.allowBackorders !== undefined) core.allowBackorders = body.allowBackorders;
       if (body.manageStock !== undefined) core.manageStock = body.manageStock;
+
+      // Points: deep-merge UI maps, then split strictly
       if (body.pointsPrice) {
-        const sp = splitPointsByLevel(body.pointsPrice);
+        const existing = await trx
+          .selectFrom("affiliateProducts")
+          .select(["regularPoints", "salePoints"])
+          .where("id", "=", productId)
+          .executeTakeFirst();
+
+        const existingRegular = jsonMaybe<RegularMap>(existing?.regularPoints) ?? {};
+        const existingSale = jsonMaybe<SaleMap | null>(existing?.salePoints) ?? null;
+        const currentPoints = mergePointsStrict(existingRegular, existingSale);
+        const mergedPoints = deepMergePoints(currentPoints, body.pointsPrice as PointsByLvl);
+        const sp = splitPointsStrict(mergedPoints);
+
         core.regularPoints = sp.regularPoints;
         core.salePoints = sp.salePoints;
       }
+
       if (body.cost) core.cost = body.cost;
       if (body.minLevelId !== undefined) core.minLevelId = body.minLevelId;
+
       if (Object.keys(core).length) {
         core.updatedAt = new Date();
         await trx
@@ -262,27 +346,42 @@ const patchSchema = z.object({
           .execute();
       }
 
-      /* ---------------- attributes ---------------- */
+      /* attributes */
       if (body.attributes) {
-        await trx.deleteFrom("productAttributeValues").where("productId", "=", productId).execute();
-        for (const a of body.attributes)
-          for (const termId of a.selectedTerms)
+        await trx
+          .deleteFrom("productAttributeValues")
+          .where("productId", "=", productId)
+          .execute();
+
+        for (const a of body.attributes) {
+          for (const termId of a.selectedTerms) {
             await trx
               .insertInto("productAttributeValues")
               .values({ productId, attributeId: a.id, termId })
               .execute();
+          }
+        }
       }
 
-      /* ---------------- variations ---------------- */
+      /* variations */
       if (body.variations) {
         const existingRows = await trx
           .selectFrom("affiliateProductVariations")
-          .select("id")
+          .select(["id", "regularPoints", "salePoints"])
           .where("productId", "=", productId)
           .execute();
+        const existingById = new Map(
+          existingRows.map((r) => [
+            r.id,
+            {
+              regular: jsonMaybe<RegularMap>(r.regularPoints) ?? {},
+              sale: jsonMaybe<SaleMap | null>(r.salePoints) ?? null,
+            },
+          ]),
+        );
         const existingIds = existingRows.map((r) => r.id);
-    
-        // delete any removed variations …
+
+        // delete removed
         const incomingIds = body.variations.map((v) => v.id);
         const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
         if (toDelete.length) {
@@ -291,31 +390,45 @@ const patchSchema = z.object({
             .where("id", "in", toDelete)
             .execute();
         }
-    
+
         for (const v of body.variations) {
-          // 💡 again use splitPointsByLevel on the nested map:
-          const srcMap = v.prices ?? v.pointsPrice;
-          const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
-    
-          const payload = {
+          const incomingSrc = (v.prices ?? v.pointsPrice) as PointsByLvl | undefined;
+
+          let mergedForVar: PointsByLvl | null = null;
+          if (incomingSrc) {
+            const prev = existingById.get(v.id);
+            const prevMerged = mergePointsStrict(prev?.regular ?? {}, prev?.sale ?? null);
+            mergedForVar = deepMergePoints(prevMerged, incomingSrc);
+          }
+
+          const payload: Record<string, unknown> = {
             productId,
             attributes: JSON.stringify(v.attributes),
             sku: v.sku,
             image: v.image ?? null,
-            regularPoints,
-            salePoints,
             cost: v.cost ?? {},
             minLevelId: v.minLevelId ?? null,
             updatedAt: new Date(),
           };
-    
-          if (existingIds.includes(v.id)) {
+
+          if (mergedForVar) {
+            const sp = splitPointsStrict(mergedForVar);
+            payload.regularPoints = sp.regularPoints;
+            payload.salePoints = sp.salePoints;
+          }
+
+          if (existingById.has(v.id)) {
             await trx
               .updateTable("affiliateProductVariations")
               .set(payload)
               .where("id", "=", v.id)
               .execute();
           } else {
+            if (!mergedForVar) {
+              const sp = splitPointsStrict((incomingSrc ?? {}) as PointsByLvl);
+              payload.regularPoints = sp.regularPoints;
+              payload.salePoints = sp.salePoints;
+            }
             await trx
               .insertInto("affiliateProductVariations")
               .values({ id: v.id, createdAt: new Date(), ...payload })
@@ -324,8 +437,11 @@ const patchSchema = z.object({
         }
       }
 
-      /* ---------------- warehouse stock ---------------- */
-      await trx.deleteFrom("warehouseStock").where("affiliateProductId", "=", productId).execute();
+      /* warehouse stock */
+      await trx
+        .deleteFrom("warehouseStock")
+        .where("affiliateProductId", "=", productId)
+        .execute();
 
       const stockRows: {
         warehouseId: string;
@@ -335,25 +451,24 @@ const patchSchema = z.object({
         quantity: number;
       }[] = [];
 
-      /* base‑level rows (if provided) */
-      if (body.warehouseStock)
+      if (body.warehouseStock) {
         stockRows.push(
           ...body.warehouseStock.map((r) => ({
             warehouseId: r.warehouseId,
             affiliateProductId: productId,
-            affiliateVariationId: r.variationId, // may be null
+            affiliateVariationId: r.variationId,
             country: r.country,
             quantity: r.quantity,
           })),
         );
+      }
 
-      /* collect per‑variation stock from body.variations */
-      if (body.variations)
+      if (body.variations) {
         for (const v of body.variations) {
           if (!v.stock) continue;
-          for (const [wId, byCountry] of Object.entries(v.stock))
-            for (const [country, qty] of Object.entries(byCountry))
-              if (qty > 0)
+          for (const [wId, byCountry] of Object.entries(v.stock)) {
+            for (const [country, qty] of Object.entries(byCountry)) {
+              if (qty > 0) {
                 stockRows.push({
                   warehouseId: wId,
                   affiliateProductId: productId,
@@ -361,9 +476,12 @@ const patchSchema = z.object({
                   country,
                   quantity: qty,
                 });
+              }
+            }
+          }
         }
+      }
 
-      /* insert */
       for (const r of stockRows) {
         await trx
           .insertInto("warehouseStock")
@@ -376,18 +494,18 @@ const patchSchema = z.object({
             country: r.country,
             quantity: r.quantity,
             organizationId,
-            tenantId,               /* FIX */
+            tenantId,
             createdAt: new Date(),
             updatedAt: new Date(),
           })
           .execute();
       }
 
-      /* stockStatus */
       await trx
         .updateTable("affiliateProducts")
         .set({
-          stockStatus: stockRows.length && (body.manageStock ?? true) ? "managed" : "unmanaged",
+          stockStatus:
+            stockRows.length && (body.manageStock ?? true) ? "managed" : "unmanaged",
           updatedAt: new Date(),
         })
         .where("id", "=", productId)
@@ -400,21 +518,20 @@ const patchSchema = z.object({
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-/* ══════════════════════════════════════════════════════════════
-   DELETE – remove product  children
-   ════════════════════════════════════════════════════════════ */
-   export async function DELETE(
-    req: NextRequest,
-    { params }: { params: { id: string } },
-  ) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx;
-  
-    const { id } = params;
 
-  /* child rows cascade thanks to FK ON DELETE CASCADE, but we
-     delete variations manually to clear their stocks first      */
+/* ══════════════════════════════════════════════════════════════
+   DELETE – remove product and children (Next 16 params fix)
+   ════════════════════════════════════════════════════════════ */
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const { id } = await context.params;
+
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   await db
     .deleteFrom("warehouseStock")
     .where("affiliateProductId", "=", id)

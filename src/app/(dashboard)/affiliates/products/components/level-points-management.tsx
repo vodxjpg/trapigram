@@ -1,3 +1,4 @@
+// src/app/(dashboard)/affiliates/products/components/level-points-management.tsx
 // app/(dashboard)/affiliates/products/components/level-points-management.tsx
 "use client";
 
@@ -31,17 +32,37 @@ export function LevelPointsManagement({
 }: Props) {
   const [active, setActive] = useState<string>("default");
 
-  /* ensure object exists for current tab */
+  /* ensure object exists for current tab, without clobbering existing user edits */
   useEffect(() => {
     const current = value?.[active];
-    if (!current) {
-      const blank = Object.fromEntries(countries.map((c) => [c, { regular: 0, sale: null }])) as Record<string, CountryPts>;
-      onChange({ ...(value || {}), [active]: blank });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, countries]);
+    // Always have a base with all countries
+    const base = Object.fromEntries(
+      countries.map((c) => [c, { regular: 0, sale: null } as CountryPts]),
+    ) as Record<string, CountryPts>;
 
-  const updatePoints = (m: Record<string, CountryPts>) => onChange({ ...(value || {}), [active]: m });
+    if (!current) {
+      onChange({ ...(value || {}), [active]: base });
+      return;
+    }
+
+    // Patch only missing countries; keep existing values intact
+    const patched: Record<string, CountryPts> = { ...current };
+    let changed = false;
+    countries.forEach((c) => {
+      if (patched[c] == null) {
+        patched[c] = { regular: 0, sale: null };
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      onChange({ ...(value || {}), [active]: patched });
+    }
+    // include value so we don't apply stale merges that drop earlier edits
+  }, [active, countries, value, onChange]);
+
+  const updatePoints = (m: Record<string, CountryPts>) =>
+    onChange({ ...(value || {}), [active]: m });
 
   const safeValue = value?.[active] ?? ({} as Record<string, CountryPts>);
 
@@ -65,7 +86,9 @@ export function LevelPointsManagement({
       </div>
 
       <PointsManagement
-        title={`Prices for ${active === "default" ? "all levels" : levels.find((x) => x.id === active)?.name ?? ""}`}
+        title={`Prices for ${
+          active === "default" ? "all levels" : levels.find((x) => x.id === active)?.name ?? ""
+        }`}
         countries={countries}
         pointsData={safeValue}
         onPointsChange={updatePoints}
