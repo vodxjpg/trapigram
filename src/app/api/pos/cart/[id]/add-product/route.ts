@@ -8,7 +8,7 @@ import { resolveUnitPrice } from "@/lib/pricing";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /* ───────────────────────────────────────────────────────────── */
-/** Idempotency helper aligned with update-product */
+/** Idempotency helper (safe: does not consume original response body) */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any } | NextResponse>
@@ -40,18 +40,29 @@ async function withIdempotency(
         return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
       }
       if (e?.code === "42P01") {
+        // table missing; just run without idempotency persistence
         await c.query("ROLLBACK");
         const r = await exec();
         return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
       }
       throw e;
     }
+
     const r = await exec();
+
+    // Safely capture a JSON body for replay WITHOUT locking the original response
+    const status = r instanceof NextResponse ? r.status : r.status;
+    const body =
+      r instanceof NextResponse
+        ? await r.clone().json().catch(() => ({}))
+        : r.body;
+
     await c.query(
       `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r instanceof NextResponse ? r.status : r.status, r instanceof NextResponse ? await r.json().catch(() => ({})) : r.body]
+      [key, status, body]
     );
     await c.query("COMMIT");
+
     return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
   } catch (err) {
     await c.query("ROLLBACK");
@@ -60,11 +71,10 @@ async function withIdempotency(
     c.release();
   }
 }
-
 /* ───────────────────────────────────────────────────────────── */
 
 const BodySchema = z.object({
-  productId: z.string(),               // may be a normal product id or an affiliateProduct id
+  productId: z.string(),               // normal product id or affiliateProduct id
   variationId: z.string().nullable().optional(),
 });
 
@@ -74,7 +84,7 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   return m ? m[1] : null;
 }
 
-/** Inventory reader aligned with update-product */
+/** Inventory reader aligned with update-product (placeholder stock column for now) */
 async function readInventoryFast(
   client: any,
   productId: string,
@@ -124,8 +134,8 @@ function readLabelish(x: any): string | null {
   if (typeof x === "object") {
     const keys = ["optionName", "valueName", "label", "name", "title", "value", "text"];
     for (const k of keys) {
-      if (x[k] != null) {
-        const v = readLabelish(x[k]);
+      if ((x as any)[k] != null) {
+        const v = readLabelish((x as any)[k]);
         if (v) return v;
       }
     }
@@ -138,7 +148,7 @@ function labelsFromAttributes(attrs: any): string[] {
   try {
     if (Array.isArray(attrs)) {
       for (const it of attrs) {
-        const v = readLabelish(it?.value) ?? readLabelish(it?.optionName) ?? readLabelish(it);
+        const v = readLabelish((it as any)?.value) ?? readLabelish((it as any)?.optionName) ?? readLabelish(it);
         push(v);
       }
       return [...new Set(out)];
@@ -164,6 +174,8 @@ function formatVariationTitle(parentTitle: string, attributes: any): string {
 
 /* ───────────────────────────────────────────────────────────── */
 
+const Body = BodySchema;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -177,13 +189,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const { id: cartId } = await params;
 
       // Parse body or query
-      let parsed: z.infer<typeof BodySchema>;
+      let parsed: z.infer<typeof Body>;
       try {
         const body = await req.json().catch(() => ({} as any));
-        parsed = BodySchema.parse(body);
+        parsed = Body.parse(body);
       } catch {
         const url = new URL(req.url);
-        parsed = BodySchema.parse({
+        parsed = Body.parse({
           productId: url.searchParams.get("productId"),
           variationId: url.searchParams.get("variationId"),
         } as any);
@@ -213,13 +225,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           await dbc.query("ROLLBACK");
           return NextResponse.json({ error: "Cart not found" }, { status: 404 });
         }
-        let country = (cartRows[0].country || "").toUpperCase();
+        let country = String(cartRows[0].country || "").toUpperCase();
         const channel: string | null = cartRows[0].channel ?? null;
         const clientId: string = cartRows[0].clientId;
         const levelId: string = cartRows[0].levelId ?? "default";
         mark("cart_lookup");
 
-        // Determine if the incoming id is a normal product or an affiliate product
+        // Determine if incoming id is normal product or affiliate
         let isAffiliate = false;
         {
           const [p, ap] = await Promise.all([
@@ -234,7 +246,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         mark("kind_detect");
 
-        // Derive store country from channel for fallback
+        // Derive store country from channel for fallback pricing
         let storeCountry: string | null = null;
         const storeId = parseStoreIdFromChannel(channel);
         if (storeId) {
@@ -253,7 +265,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         mark("store_lookup");
 
-        // Resolve unit price (points for affiliate; money for normal), possibly switching cart country
+        // Resolve unit price
         let unit: number;
         if (isAffiliate) {
           const { rows: ap } = await dbc.query(
@@ -287,7 +299,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
           }
 
-          // Affiliate balance check (adding 1 unit)
+          // Affiliate balance check (adding 1)
           const { rows: balRows } = await dbc.query(
             `SELECT "pointsCurrent" FROM "affiliatePointBalances"
                WHERE "organizationId"=$1 AND "clientId"=$2`,
@@ -316,32 +328,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         mark("resolve_price");
 
-        // Existing line?
+        // Existing line? (NOTE: two whereVar strings to keep indexes correct)
         const withVariation = variationId !== null;
-        const whereVar = withVariation ? ` AND "variationId"=$3` : "";
-        const baseArgs = [cartId, parsed.productId, ...(withVariation ? [variationId] as any[] : [])];
+        const whereVarSel = withVariation ? ` AND "variationId"=$3` : "";
+        const baseArgsSel = [cartId, parsed.productId, ...(withVariation ? [variationId] as any[] : [])];
 
         let existingQty = 0;
         if (isAffiliate) {
           const { rows } = await dbc.query(
             `SELECT quantity FROM "cartProducts"
-              WHERE "cartId"=$1 AND "affiliateProductId"=$2${whereVar}
+              WHERE "cartId"=$1 AND "affiliateProductId"=$2${whereVarSel}
               LIMIT 1`,
-            baseArgs
+            baseArgsSel
           );
           existingQty = Number(rows?.[0]?.quantity ?? 0);
         } else {
           const { rows } = await dbc.query(
             `SELECT quantity FROM "cartProducts"
-              WHERE "cartId"=$1 AND "productId"=$2${whereVar}
+              WHERE "cartId"=$1 AND "productId"=$2${whereVarSel}
               LIMIT 1`,
-            baseArgs
+            baseArgsSel
           );
           existingQty = Number(rows?.[0]?.quantity ?? 0);
         }
         mark("line_lookup");
 
-        // Inventory enforcement (normal products only) — verify adding 1 won't exceed stock if managed & no backorder
+        // Inventory enforcement (normal products only)
         if (!isAffiliate) {
           const inv = await readInventoryFast(dbc, parsed.productId, variationId);
           if (inv.manage && !inv.backorder && inv.stock !== null) {
@@ -357,13 +369,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         mark("inventory_check");
 
-        // Persist
+        // Persist (⚠️ FIXED PARAM INDEXES BELOW)
         if (isAffiliate) {
           if (existingQty > 0) {
+            const whereVarUpd = withVariation ? ` AND "variationId"=$4` : ""; // $4 (NOT $3)
             await dbc.query(
               `UPDATE "cartProducts"
                   SET quantity=quantity+1, "unitPrice"=$1, "updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "affiliateProductId"=$3${whereVar}`,
+                WHERE "cartId"=$2 AND "affiliateProductId"=$3${whereVarUpd}`,
               [unit, cartId, parsed.productId, ...(withVariation ? [variationId] : [])]
             );
           } else {
@@ -392,10 +405,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           );
         } else {
           if (existingQty > 0) {
+            const whereVarUpd = withVariation ? ` AND "variationId"=$4` : ""; // $4 (NOT $3)
             await dbc.query(
               `UPDATE "cartProducts"
                   SET quantity=quantity+1, "unitPrice"=$1, "updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "productId"=$3${whereVar}`,
+                WHERE "cartId"=$2 AND "productId"=$3${whereVarUpd}`,
               [unit, cartId, parsed.productId, ...(withVariation ? [variationId] : [])]
             );
           } else {
@@ -413,7 +427,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await adjustStock(dbc, parsed.productId, variationId, country, -1);
         mark("adjust_stock");
 
-        // FAST cart hash (aggregate)
+        // FAST cart hash
         const { rows: hv } = await dbc.query(
           `SELECT COUNT(*)::int AS n,
                   COALESCE(SUM(quantity),0)::int AS q,
@@ -433,11 +447,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await dbc.query("COMMIT");
         mark("tx_commit");
 
-        // broadcast latest cart to the paired customer display (non-blocking)
+        // broadcast to customer display (non-blocking)
         try { setTimeout(() => { (async () => { try { await emitCartToDisplay(cartId); } catch {} })(); }, 0); } catch {}
         mark("emit_display_sched");
 
-        // Snapshot (same shape as update-product)
+        // Snapshot
         const { rows: snap } = await pool.query(
           `SELECT 
              p.id                            AS pid,
