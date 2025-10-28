@@ -540,7 +540,7 @@ export function POSInterface() {
 
   /** ---------- Actions (now optimistic) ---------- */
 
-  const TILE_SPINNER_MS = 600 // quick visual feedback per your request
+  const TILE_SPINNER_MS = 1200 // quick visual feedback per your request
   const addToCart = async (p: GridProduct) => {
     try {
       if (!selectedCustomer?.id) {
