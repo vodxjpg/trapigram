@@ -6,92 +6,13 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
-
-/** Small result envelope for idempotent execs */
-type ExecResult = { status: number; body: any; headers?: Record<string, string> };
+import withIdempotency from "@/lib/idempotency";
 
 /** Standard security/perf headers for mutable responses */
 const BASE_HEADERS: Record<string, string> = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
   "X-Content-Type-Options": "nosniff",
 };
-
-/** DB-backed idempotency (preserves existing behaviour; now adds headers) */
-async function withIdempotency(
-  req: NextRequest,
-  exec: () => Promise<ExecResult>
-): Promise<NextResponse> {
-  const key = req.headers.get("Idempotency-Key");
-  const method = req.method;
-  const path = new URL(req.url).pathname;
-
-  // Fast path: no key => just execute, still set headers.
-  if (!key) {
-    const r = await exec();
-    return NextResponse.json(r.body, {
-      status: r.status,
-      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-    });
-  }
-
-  const c = await pool.connect();
-  try {
-    await c.query("BEGIN");
-    try {
-      await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
-        [key, method, path]
-      );
-    } catch (e: any) {
-      // Replay path (unique violation)
-      if (e?.code === "23505") {
-        const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key=$1`,
-          [key]
-        );
-        await c.query("COMMIT");
-        if (rows[0]) {
-          return NextResponse.json(rows[0].response, {
-            status: rows[0].status,
-            headers: BASE_HEADERS,
-          });
-        }
-        return NextResponse.json(
-          { error: "Idempotency replay but no record" },
-          { status: 409, headers: BASE_HEADERS }
-        );
-      }
-      // Table missing: proceed without idempotency persistence
-      if (e?.code === "42P01") {
-        await c.query("ROLLBACK");
-        const r = await exec();
-        return NextResponse.json(r.body, {
-          status: r.status,
-          headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-        });
-      }
-      throw e;
-    }
-
-    const r = await exec();
-
-    await c.query(
-      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
-    );
-    await c.query("COMMIT");
-
-    return NextResponse.json(r.body, {
-      status: r.status,
-      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
-    });
-  } catch (err) {
-    await c.query("ROLLBACK");
-    throw err;
-  } finally {
-    c.release();
-  }
-}
 
 /* ─────────────────────────────────────────────────────────── */
 
@@ -134,13 +55,13 @@ export async function POST(req: NextRequest) {
             try {
               const parsed = JSON.parse(row.countries);
               if (Array.isArray(parsed) && parsed.length) first = parsed[0];
-            } catch { }
+            } catch { /* ignore */ }
           }
           if (!first && row.metadata) {
             try {
               const m = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
               first = m?.defaultCountry || m?.country || null;
-            } catch { }
+            } catch { /* ignore */ }
           }
           if (first && typeof first === "string" && first.length === 2) return first.toUpperCase();
         }
@@ -164,11 +85,16 @@ export async function POST(req: NextRequest) {
           [organizationId]
         );
         if (!rows.length) {
-          return {
-            status: 400,
-            body: { error: "clientId is required for POS cart" },
-            headers: { "Server-Timing": 'm0;desc="parse_body"' },
-          };
+          return NextResponse.json(
+            { error: "clientId is required for POS cart" },
+            {
+              status: 400,
+              headers: {
+                ...BASE_HEADERS,
+                "Server-Timing": 'm0;desc="parse_body"',
+              },
+            }
+          );
         }
         clientId = rows[0].id;
       }
@@ -202,11 +128,16 @@ export async function POST(req: NextRequest) {
             cart.country = desiredCountry;
           }
           mark("reuse_exact");
-          return {
-            status: 201,
-            body: { newCart: cart, reused: true },
-            headers: { "Server-Timing": encodeServerTiming(marks) },
-          };
+          return NextResponse.json(
+            { newCart: cart, reused: true },
+            {
+              status: 201,
+              headers: {
+                ...BASE_HEADERS,
+                "Server-Timing": encodeServerTiming(marks),
+              },
+            }
+          );
         }
       }
 
@@ -233,11 +164,16 @@ export async function POST(req: NextRequest) {
           cart.country = desiredCountry;
         }
         mark("reuse_any_pos");
-        return {
-          status: 201,
-          body: { newCart: cart, reused: true },
-          headers: { "Server-Timing": encodeServerTiming(marks) },
-        };
+        return NextResponse.json(
+          { newCart: cart, reused: true },
+          {
+            status: 201,
+            headers: {
+              ...BASE_HEADERS,
+              "Server-Timing": encodeServerTiming(marks),
+            },
+          }
+        );
       }
 
       /* 6) Create the cart (no shipping method for walk-in POS) */
@@ -257,8 +193,8 @@ export async function POST(req: NextRequest) {
         cartId,                // $1 id
         clientId,              // $2 "clientId"
         desiredCountry,        // $3 country
-        null,                  // $4 "couponCode" -> NULL
-        null,                  // $5 "shippingMethod" -> NULL (POS walk-in)
+        null,                  // $4 "couponCode"
+        null,                  // $5 "shippingMethod"
         EMPTY_SHA256,          // $6 "cartHash"
         EMPTY_SHA256,          // $7 "cartUpdatedHash"
         organizationId,        // $8 "organizationId"
@@ -268,17 +204,28 @@ export async function POST(req: NextRequest) {
       const { rows: created } = await pool.query(insertSql, vals);
       mark("create_cart");
 
-      return {
-        status: 201,
-        body: { newCart: created[0], reused: false },
-        headers: { "Server-Timing": encodeServerTiming(marks) },
-      };
+      return NextResponse.json(
+        { newCart: created[0], reused: false },
+        {
+          status: 201,
+          headers: {
+            ...BASE_HEADERS,
+            "Server-Timing": encodeServerTiming(marks),
+          },
+        }
+      );
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        return { status: 400, body: { error: err.errors } };
+        return NextResponse.json(
+          { error: err.errors },
+          { status: 400, headers: BASE_HEADERS }
+        );
       }
       console.error("[POS POST /pos/cart] error:", err);
-      return { status: 500, body: { error: "Internal server error" } };
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500, headers: BASE_HEADERS }
+      );
     }
   });
 }

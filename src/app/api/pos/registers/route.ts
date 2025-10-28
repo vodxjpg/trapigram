@@ -1,62 +1,10 @@
+// src/app/api/pos/registers/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
-
-/** Idempotency (POST) */
-async function withIdempotency(
-  req: NextRequest,
-  exec: () => Promise<{ status: number; body: any }>
-): Promise<NextResponse> {
-  const key = req.headers.get("Idempotency-Key");
-  if (!key) {
-    const r = await exec();
-    return NextResponse.json(r.body, { status: r.status });
-  }
-  const method = req.method;
-  const path = new URL(req.url).pathname;
-  const c = await pool.connect();
-  try {
-    await c.query("BEGIN");
-    try {
-      await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt")
-         VALUES ($1,$2,$3,NOW())`,
-        [key, method, path]
-      );
-    } catch (e: any) {
-      if (e?.code === "23505") {
-        const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key = $1`,
-          [key]
-        );
-        await c.query("COMMIT");
-        if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
-        return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
-      }
-      if (e?.code === "42P01") {
-        await c.query("ROLLBACK");
-        const r = await exec();
-        return NextResponse.json(r.body, { status: r.status });
-      }
-      throw e;
-    }
-
-    const r = await exec();
-    await c.query(
-      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
-    );
-    await c.query("COMMIT");
-    return NextResponse.json(r.body, { status: r.status });
-  } catch (err) {
-    await c.query("ROLLBACK");
-    throw err;
-  } finally {
-    c.release();
-  }
-}
+import withIdempotency from "@/lib/idempotency";
 
 const CreateSchema = z.object({
   storeId: z.string().min(1),
@@ -105,7 +53,9 @@ export async function POST(req: NextRequest) {
         `SELECT id FROM stores WHERE id=$1 AND "organizationId"=$2`,
         [input.storeId, organizationId]
       );
-      if (!s.length) return { status: 404, body: { error: "Store not found" } };
+      if (!s.length) {
+        return NextResponse.json({ error: "Store not found" }, { status: 404 });
+      }
 
       const id = uuidv4();
       const { rows } = await pool.query(
@@ -121,12 +71,16 @@ export async function POST(req: NextRequest) {
           input.active,
         ]
       );
-      return { status: 201, body: { register: rows[0] } };
+      return NextResponse.json({ register: rows[0] }, { status: 201 });
     } catch (err: any) {
-      if (err instanceof z.ZodError)
-        return { status: 400, body: { error: err.errors } };
+      if (err instanceof z.ZodError) {
+        return NextResponse.json({ error: err.errors }, { status: 400 });
+      }
       console.error("[POST /pos/registers]", err);
-      return { status: 500, body: { error: err.message ?? "Internal server error" } };
+      return NextResponse.json(
+        { error: err.message ?? "Internal server error" },
+        { status: 500 }
+      );
     }
   });
 }

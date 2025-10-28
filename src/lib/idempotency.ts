@@ -1,3 +1,4 @@
+// src/lib/idempotency.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 
@@ -5,17 +6,17 @@ import { pgPool as pool } from "@/lib/db";
  * Exec returns either {status, body} OR a NextResponse.
  * We always return a NextResponse.
  *
- * IMPORTANT:
- * - Do NOT use response.clone() here. Tee-ing streams can make the original
- *   body "locked" for Next's response piping.
- * - Instead, read the *original* body once (text), persist a JSON/object form,
- *   then return a brand-new NextResponse with the same body and headers.
+ * NEVER call r.json() or r.clone() on a NextResponse you intend to return.
+ * Read the original body once (text), persist a JSON-ish shape, and
+ * return a brand-new NextResponse with the same body & headers.
  */
 export async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any } | NextResponse>
 ): Promise<NextResponse> {
   const key = req.headers.get("Idempotency-Key");
+
+  // Fast-path: no idempotency
   if (!key) {
     const r = await exec();
     return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
@@ -29,10 +30,12 @@ export async function withIdempotency(
     await c.query("BEGIN");
     try {
       await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
+        `INSERT INTO idempotency(key, method, path, "createdAt")
+         VALUES ($1,$2,$3,NOW())`,
         [key, method, path]
       );
     } catch (e: any) {
+      // replay
       if (e?.code === "23505") {
         const { rows } = await c.query(
           `SELECT status, response FROM idempotency WHERE key=$1`,
@@ -42,6 +45,7 @@ export async function withIdempotency(
         if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
         return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
       }
+      // table missing → best-effort passthrough
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
         const r = await exec();
@@ -50,19 +54,18 @@ export async function withIdempotency(
       throw e;
     }
 
-    const result = await exec();
+    const r = await exec();
 
-    // Case 1: The route returned a NextResponse (streaming or not).
-    if (result instanceof NextResponse) {
-      const status = result.status;
-      // Copy headers BEFORE consuming body.
-      const headers = new Headers(result.headers);
+    // Case A: route returned a NextResponse (possibly streaming)
+    if (r instanceof NextResponse) {
+      const status = r.status;
+      const headers = new Headers(r.headers);
 
-      // Consume body once and persist safely.
+      // Read & persist once
       let bodyText = "";
       let storedBody: any = null;
       try {
-        bodyText = await result.text(); // consume original body
+        bodyText = await r.text(); // consumes the original body
         const ct = (headers.get("content-type") || "").toLowerCase();
         if (ct.includes("application/json")) {
           try { storedBody = JSON.parse(bodyText); } catch { storedBody = null; }
@@ -79,28 +82,22 @@ export async function withIdempotency(
          WHERE key=$1`,
         [key, status, storedBody]
       );
-
       await c.query("COMMIT");
 
-      // Re-emit a fresh response with the same body & headers.
-      // Remove content-length to let Next recalc it for our new body.
+      // Re-emit a fresh response (no locked stream)
       headers.delete("content-length");
       return new NextResponse(bodyText, { status, headers });
     }
 
-    // Case 2: Plain object form {status, body}
-    const status = result.status;
-    const persisted = result.body ?? null;
-
+    // Case B: plain object form
     await c.query(
       `UPDATE idempotency
          SET status=$2, response=$3, "updatedAt"=NOW()
        WHERE key=$1`,
-      [key, status, persisted]
+      [key, r.status, r.body ?? null]
     );
     await c.query("COMMIT");
-
-    return NextResponse.json(persisted, { status });
+    return NextResponse.json(r.body ?? null, { status: r.status });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
