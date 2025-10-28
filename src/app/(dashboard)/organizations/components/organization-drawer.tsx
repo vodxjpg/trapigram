@@ -1,4 +1,5 @@
-"use client"
+"use client";
+
 import Link from "next/link";
 import type React from "react";
 import { useState, useEffect } from "react";
@@ -30,10 +31,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useIsMobile } from "@/hooks/use-mobile";
-import countriesLib from "i18n-iso-countries";
-import enLocale from "i18n-iso-countries/langs/en.json";
-import { getCountries } from "libphonenumber-js";
-import ReactCountryFlag from "react-country-flag";
 import {
   Dialog,
   DialogContent,
@@ -43,11 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-countriesLib.registerLocale(enLocale);
-const allCountries = getCountries().map((code) => ({
-  code,
-  name: countriesLib.getName(code, "en") || code,
-}));
+import CountryPicker from "@/components/countries/country-picker";
 
 type Organization = {
   id: string;
@@ -82,17 +75,13 @@ export function OrganizationDrawer({
   const [slugChecking, setSlugChecking] = useState(false);
   const [slugExists, setSlugExists] = useState(false);
   const [slugTouched, setSlugTouched] = useState(false);
-  const [countrySearch, setCountrySearch] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [fetchedOrg, setFetchedOrg] = useState<Organization | null>(null);
-  const [showVerificationModal, setShowVerificationModal] =
-    useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [verificationPhrase, setVerificationPhrase] = useState("");
-  const [pendingValues, setPendingValues] =
-    useState<FormValues | null>(null);
+  const [pendingValues, setPendingValues] = useState<FormValues | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationError, setVerificationError] =
-    useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   const formSchema = z.object({
     name: z.string().min(1, "Name is required"),
@@ -100,15 +89,10 @@ export function OrganizationDrawer({
       .string()
       .min(1, "Slug is required")
       .regex(/^[a-z0-9-]+$/, {
-        message:
-          "Slug can only contain lowercase letters, numbers, and hyphens",
+        message: "Slug can only contain lowercase letters, numbers, and hyphens",
       }),
-    countries: z
-      .array(z.string().length(2))
-      .min(1, "At least one country is required"),
-    secretPhrase: organization
-      ? z.string().optional()
-      : z.string().min(1, "Secret phrase is required"),
+    countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
+    secretPhrase: organization ? z.string().optional() : z.string().min(1, "Secret phrase is required"),
   });
 
   const form = useForm<FormValues>({
@@ -121,7 +105,6 @@ export function OrganizationDrawer({
     },
   });
 
-  // ─── Fetch existing org when editing ────────────────────────
   useEffect(() => {
     if (!organization?.id || !open) return;
     (async () => {
@@ -151,10 +134,7 @@ export function OrganizationDrawer({
     })();
   }, [organization, open, form]);
 
-  // ─── Handlers for form fields ───────────────────────────────
-  const handleNameChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value;
     form.setValue("name", name);
     if (!slugTouched) {
@@ -168,13 +148,10 @@ export function OrganizationDrawer({
   };
 
   const checkSlugExists = async (slug: string) => {
-    if (!slug || (fetchedOrg && fetchedOrg.slug === slug))
-      return;
+    if (!slug || (fetchedOrg && fetchedOrg.slug === slug)) return;
     setSlugChecking(true);
     try {
-      const res = await fetch(
-        `/api/auth/organization/check-org-slug?slug=${slug}`
-      );
+      const res = await fetch(`/api/auth/organization/check-org-slug?slug=${slug}`);
       if (!res.ok) throw new Error("Failed to check slug");
       const { available } = await res.json();
       setSlugExists(!available);
@@ -186,58 +163,22 @@ export function OrganizationDrawer({
     }
   };
 
-  const handleSlugChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSlugTouched(true);
-    const slug = e.target.value
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, "");
+    const slug = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "");
     form.setValue("slug", slug);
     checkSlugExists(slug);
   };
 
-  const filteredCountries = allCountries.filter(
-    (c) =>
-      c.name
-        .toLowerCase()
-        .includes(countrySearch.toLowerCase()) ||
-      c.code
-        .toLowerCase()
-        .includes(countrySearch.toLowerCase())
-  );
-
-  const addCountry = (code: string) => {
-    const current = form.getValues("countries");
-    if (!current.includes(code)) {
-      form.setValue("countries", [...current, code]);
-    }
-    setCountrySearch("");
-  };
-
-  const removeCountry = (code: string) => {
-    const current = form.getValues("countries");
-    form.setValue(
-      "countries",
-      current.filter((c) => c !== code)
-    );
-  };
-
   const generateSecurePhrase = () => {
     const rand = crypto.getRandomValues(new Uint8Array(16));
-    const phrase = btoa(
-      String.fromCharCode(...rand)
-    );
+    const phrase = btoa(String.fromCharCode(...rand));
     form.setValue("secretPhrase", phrase);
   };
 
-  // ─── Form submission ────────────────────────────────────────
   const onSubmit = async (values: FormValues) => {
     if (slugExists) {
-      form.setError("slug", {
-        type: "manual",
-        message: "This slug already exists.",
-      });
+      form.setError("slug", { type: "manual", message: "This slug already exists." });
       return;
     }
 
@@ -249,11 +190,9 @@ export function OrganizationDrawer({
     }
   };
 
-  // ─── Create new org via authClient, then optional secret patch ─
   const handleCreate = async (values: FormValues) => {
     setIsSubmitting(true);
     try {
-      // 1) create via SDK
       const createRes = await authClient.organization.create({
         name: values.name,
         slug: values.slug,
@@ -262,21 +201,15 @@ export function OrganizationDrawer({
       });
       const newId = createRes.data.id;
 
-      // 2) if secretPhrase provided, PATCH it in
       if (values.secretPhrase) {
-        await fetch(
-          `/api/organizations/${newId}?organizationId=${newId}`,
-          {
-            method: "PATCH",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              secretPhrase: values.secretPhrase,
-            }),
-          }
-        );
+        await fetch(`/api/organizations/${newId}?organizationId=${newId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ secretPhrase: values.secretPhrase }),
+        });
       }
 
       toast.success("Organization created successfully");
@@ -289,7 +222,6 @@ export function OrganizationDrawer({
     }
   };
 
-  // ─── Update existing org ────────────────────────────────────
   const handleUpdate = async (values: FormValues) => {
     setIsSubmitting(true);
     try {
@@ -300,15 +232,12 @@ export function OrganizationDrawer({
       };
       if (values.secretPhrase) payload.secretPhrase = values.secretPhrase;
 
-      await fetch(
-        `/api/organizations/${organization!.id}?organizationId=${organization!.id}`,
-        {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
+      await fetch(`/api/organizations/${organization!.id}?organizationId=${organization!.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
       toast.success("Organization updated successfully");
       onClose(true);
     } catch (err: any) {
@@ -319,13 +248,8 @@ export function OrganizationDrawer({
     }
   };
 
-  // ─── Verification before updating ──────────────────────────
   const handleVerificationSubmit = async () => {
-    if (
-      !verificationPhrase ||
-      !pendingValues ||
-      !organization
-    ) {
+    if (!verificationPhrase || !pendingValues || !organization) {
       toast.error("Missing data for verification");
       setVerificationError("Missing required data");
       return;
@@ -334,23 +258,18 @@ export function OrganizationDrawer({
     setVerificationError(null);
 
     try {
-      const resp = await fetch(
-        `/api/organizations/verify-secret?organizationId=${organization.id}`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            organizationId: organization.id,
-            secretPhrase: verificationPhrase,
-          }),
-        }
-      );
+      const resp = await fetch(`/api/organizations/verify-secret?organizationId=${organization.id}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: organization.id,
+          secretPhrase: verificationPhrase,
+        }),
+      });
       const { verified } = await resp.json();
       if (verified) {
-        toast.success(
-          "Secret phrase verified successfully"
-        );
+        toast.success("Secret phrase verified successfully");
         await handleUpdate(pendingValues!);
         setShowVerificationModal(false);
         setPendingValues(null);
@@ -367,30 +286,20 @@ export function OrganizationDrawer({
       setIsVerifying(false);
     }
   };
+
   return (
     <>
-      <Drawer
-        open={open}
-        onOpenChange={(o) => !o && onClose()}
-        direction={isMobile ? "bottom" : "right"}
-      >
+      <Drawer open={open} onOpenChange={(o) => !o && onClose()} direction={isMobile ? "bottom" : "right"}>
         <DrawerContent>
           <DrawerHeader>
-            <DrawerTitle>
-              {organization ? "Edit Organization" : "Add Organization"}
-            </DrawerTitle>
+            <DrawerTitle>{organization ? "Edit Organization" : "Add Organization"}</DrawerTitle>
             <DrawerDescription>
-              {organization
-                ? "Update your organization details."
-                : "Create a new organization for your workspace."}
+              {organization ? "Update your organization details." : "Create a new organization for your workspace."}
             </DrawerDescription>
           </DrawerHeader>
           <div className="px-4 overflow-y-auto">
             <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit(onSubmit)}
-                className="space-y-6 pb-6"
-              >
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pb-6">
                 {/* Name */}
                 <FormField
                   control={form.control}
@@ -399,15 +308,9 @@ export function OrganizationDrawer({
                     <FormItem>
                       <FormLabel>Name</FormLabel>
                       <FormControl>
-                        <Input
-                          {...field}
-                          onChange={handleNameChange}
-                          placeholder="Organization name"
-                        />
+                        <Input {...field} onChange={handleNameChange} placeholder="Organization name" />
                       </FormControl>
-                      <FormDescription>
-                        The display name for this organization.
-                      </FormDescription>
+                      <FormDescription>The display name for this organization.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -421,11 +324,7 @@ export function OrganizationDrawer({
                       <FormLabel>Slug</FormLabel>
                       <FormControl>
                         <div className="relative">
-                          <Input
-                            {...field}
-                            onChange={handleSlugChange}
-                            placeholder="organization-slug"
-                          />
+                          <Input {...field} onChange={handleSlugChange} placeholder="organization-slug" />
                           {slugChecking && (
                             <div className="absolute right-3 top-3">
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -435,11 +334,7 @@ export function OrganizationDrawer({
                       </FormControl>
                       <FormDescription>
                         The URL-friendly identifier for this organization.
-                        {slugExists && (
-                          <span className="text-destructive ml-1">
-                            This slug already exists.
-                          </span>
-                        )}
+                        {slugExists && <span className="text-destructive ml-1">This slug already exists.</span>}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -449,78 +344,17 @@ export function OrganizationDrawer({
                 <FormField
                   control={form.control}
                   name="countries"
-                  render={() => (
+                  render={({ field }) => (
                     <FormItem>
                       <FormLabel>Countries</FormLabel>
-                      <div className="mb-2">
-                        <Input
-                          placeholder="Search country..."
-                          value={countrySearch}
-                          onChange={(e) =>
-                            setCountrySearch(e.target.value)
-                          }
-                        />
-                        {countrySearch &&
-                          filteredCountries.length > 0 && (
-                            <div className="border mt-1 p-2 max-h-36 overflow-y-auto bg-white">
-                              {filteredCountries.map((country) => (
-                                <div
-                                  key={country.code}
-                                  className="flex items-center gap-2 p-1 hover:bg-gray-100 cursor-pointer"
-                                  onClick={() =>
-                                    addCountry(country.code)
-                                  }
-                                >
-                                  <ReactCountryFlag
-                                    countryCode={country.code}
-                                    svg
-                                    className="inline-block mr-2"
-                                  />
-                                  <span>
-                                    {country.name} ({country.code})
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {form
-                          .watch("countries")
-                          .map((code: string) => {
-                            const country = allCountries.find(
-                              (c) => c.code === code
-                            );
-                            if (!country) return null;
-                            return (
-                              <div
-                                key={code}
-                                className="border border-gray-300 px-2 py-1 rounded-full flex items-center"
-                              >
-                                <ReactCountryFlag
-                                  countryCode={country.code}
-                                  svg
-                                  className="inline-block mr-1"
-                                />
-                                <span className="mr-2 text-sm">
-                                  {country.name} ({country.code})
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removeCountry(code)
-                                  }
-                                  className="text-red-500 text-sm font-bold"
-                                >
-                                  x
-                                </button>
-                              </div>
-                            );
-                          })}
-                      </div>
-                      <FormDescription>
-                        Select the countries this organization operates in.
-                      </FormDescription>
+                      <CountryPicker
+                        value={field.value}
+                        onChange={(next) => field.onChange(next)}
+                        className="w-full"
+                        inputPlaceholder="Search country..."
+                        listMaxHeight={144}
+                      />
+                      <FormDescription>Select the countries this organization operates in.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -534,11 +368,7 @@ export function OrganizationDrawer({
                       <FormLabel>Secret Phrase</FormLabel>
                       <div className="relative mb-2">
                         <FormControl>
-                          <Input
-                            type={showSecret ? "text" : "password"}
-                            placeholder="Enter secret phrase"
-                            {...field}
-                          />
+                          <Input type={showSecret ? "text" : "password"} placeholder="Enter secret phrase" {...field} />
                         </FormControl>
                         <button
                           type="button"
@@ -565,10 +395,7 @@ export function OrganizationDrawer({
                       <FormMessage />
                       {organization && (
                         <div className="mt-2 text-center">
-                          <Link
-                            href="/organizations/change-secret"
-                            className="text-sm text-black-600 hover:underline"
-                          >
+                          <Link href="/organizations/change-secret" className="text-sm text-black-600 hover:underline">
                             Change / Reset secret phrase
                           </Link>
                         </div>
@@ -578,12 +405,8 @@ export function OrganizationDrawer({
                 />
                 <DrawerFooter className="px-0">
                   <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    )}
-                    {organization
-                      ? "Update Organization"
-                      : "Create Organization"}
+                    {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {organization ? "Update Organization" : "Create Organization"}
                   </Button>
                   <DrawerClose asChild>
                     <Button variant="outline">Cancel</Button>
@@ -595,32 +418,20 @@ export function OrganizationDrawer({
         </DrawerContent>
       </Drawer>
 
-      <Dialog
-        open={showVerificationModal}
-        onOpenChange={setShowVerificationModal}
-      >
+      <Dialog open={showVerificationModal} onOpenChange={setShowVerificationModal}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Verify Secret Phrase</DialogTitle>
-            <DialogDescription>
-              Please enter the previous secret phrase to proceed with the
-              update.
-            </DialogDescription>
+            <DialogDescription>Please enter the previous secret phrase to proceed with the update.</DialogDescription>
           </DialogHeader>
           <div className="py-4 space-y-2">
             <Input
               type="password"
               placeholder="Enter previous secret phrase"
               value={verificationPhrase}
-              onChange={(e) =>
-                setVerificationPhrase(e.target.value)
-              }
+              onChange={(e) => setVerificationPhrase(e.target.value)}
             />
-            {verificationError && (
-              <p className="text-sm text-destructive">
-                {verificationError}
-              </p>
-            )}
+            {verificationError && <p className="text-sm text-destructive">{verificationError}</p>}
           </div>
           <DialogFooter>
             <Button
@@ -633,13 +444,8 @@ export function OrganizationDrawer({
             >
               Cancel
             </Button>
-            <Button
-              onClick={handleVerificationSubmit}
-              disabled={!verificationPhrase || isVerifying}
-            >
-              {isVerifying && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+            <Button onClick={handleVerificationSubmit} disabled={!verificationPhrase || isVerifying}>
+              {isVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Verify and Update
             </Button>
           </DialogFooter>

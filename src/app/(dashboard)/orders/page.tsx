@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Edit,
-  Mail,
   MoreVertical,
   Search,
   Truck,
@@ -57,6 +56,7 @@ import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 // TanStack table + standardized renderer
 import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
 /* ------------------------------------------------------------------ */
 /*  Types & constants                                                 */
@@ -105,6 +105,12 @@ type ShippingCompany = { id: string; name: string };
 /* ------------------------------------------------------------------ */
 export default function OrdersPage() {
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle();
+
+  /* set page title */
+  useEffect(() => {
+    setHeaderTitle("Orders");
+  }, [setHeaderTitle]);
 
   // org + permissions
   const { data: activeOrg } = authClient.useActiveOrganization();

@@ -1,4 +1,3 @@
-// src/app/(dashboard)/report/order-report.tsx
 "use client";
 
 import Link from "next/link";
@@ -71,12 +70,8 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 
-// React Select + flags to match Coupon view
-import ReactSelect from "react-select";
-import ReactCountryFlag from "react-country-flag";
-import countriesLib from "i18n-iso-countries";
-import enLocale from "i18n-iso-countries/langs/en.json";
-countriesLib.registerLocale(enLocale);
+// ⬇️ NEW reusable component for Countries
+import CountryMultiSelect from "@/components/countries/country-multi-select";
 
 type Order = {
   id: string;
@@ -306,27 +301,6 @@ export default function OrderReport() {
 
     fetchOrders();
   }, [dateRange, currency, status, canShow]);
-
-  const countryOptions = useMemo(
-    () =>
-      countries.map((c) => ({
-        value: c,
-        label: countriesLib.getName(c, "en") || c,
-      })),
-    [countries]
-  );
-  const SELECT_ALL = "__ALL__";
-  const DESELECT_ALL = "__NONE__";
-
-  const selectOptions = useMemo(
-    () => [
-      { value: SELECT_ALL, label: "SELECT ALL" },
-      { value: DESELECT_ALL, label: "DESELECT ALL" },
-      ...countryOptions,
-    ],
-    [countryOptions]
-  );
-  // chart data will be derived from filtered orders below
 
   // ── Helpers to read POS signals from orderNumber / channel / orderMeta ──
   function parseOrderMeta(meta: any): any[] {
@@ -965,7 +939,7 @@ export default function OrderReport() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="justify-start w-full sm:w-[220px]"
+                            className="justify-start w/full sm:w-[220px]"
                             aria-haspopup="listbox"
                             aria-expanded={dsPopoverOpen}
                           >
@@ -1025,7 +999,7 @@ export default function OrderReport() {
 
             </div>
 
-            {/* New Row: Countries multi-select (matches Coupon styling) */}
+            {/* Countries multi-select row (now uses reusable component) */}
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-medium">Countries</span>
@@ -1037,62 +1011,15 @@ export default function OrderReport() {
                   </span>
                 )}
               </div>
-              <div className="w-full sm:w-[640px]">
-                <ReactSelect
-                  isMulti
-                  closeMenuOnSelect={false}
-                  hideSelectedOptions={false}
-                  classNamePrefix="rs"
-                  options={selectOptions}
-                  placeholder="Select country(s)"
-                  value={countryOptions.filter((o) =>
-                    selectedCountries.includes(o.value)
-                  )}
-                  onChange={(opts: any, actionMeta: any) => {
-                    const clicked = actionMeta?.option as
-                      | { value: string }
-                      | undefined;
-
-                    // Handle special options
-                    if (actionMeta?.action === "select-option" && clicked) {
-                      if (clicked.value === SELECT_ALL) {
-                        setSelectedCountries(countries); // all available from API
-                        return;
-                      }
-                      if (clicked.value === DESELECT_ALL) {
-                        setSelectedCountries([]);
-                        return;
-                      }
-                    }
-
-                    // Normal multi-select behavior
-                    const next = Array.isArray(opts) ? opts : [];
-                    setSelectedCountries(
-                      next
-                        .filter(
-                          (o) =>
-                            o.value !== SELECT_ALL && o.value !== DESELECT_ALL
-                        )
-                        .map((o) => o.value)
-                    );
-                  }}
-                  formatOptionLabel={(o: any) =>
-                    o.value === SELECT_ALL || o.value === DESELECT_ALL ? (
-                      <div className="text-xs font-medium">{o.label}</div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <ReactCountryFlag
-                          countryCode={o.value}
-                          svg
-                          style={{ width: 20 }}
-                        />
-                        <span>{o.label}</span>
-                      </div>
-                    )
-                  }
-                />
-              </div>
+              <CountryMultiSelect
+                countries={countries}
+                selectedCountries={selectedCountries}
+                onChange={setSelectedCountries}
+                className="w-full sm:w-[640px]"
+                placeholder="Select country(s)"
+              />
             </div>
+
             {derivedTotals && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 {/* Paid (chart-aligned) */}
@@ -1212,7 +1139,7 @@ export default function OrderReport() {
                               </Link>
                             </TableCell>
 
-                            <TableCell className="max-w-[280px]">
+                            <TableCell className="max-w/[280px]">
                               {o.dropshipperLabel ?? "—"}
                             </TableCell>
 

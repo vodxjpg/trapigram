@@ -61,12 +61,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-// React Select + flags (same as revenue page)
-import ReactSelect from "react-select";
-import ReactCountryFlag from "react-country-flag";
-import countriesLib from "i18n-iso-countries";
-import enLocale from "i18n-iso-countries/langs/en.json";
-countriesLib.registerLocale(enLocale);
+// ⬇️ Use the reusable component instead of inlined react-select logic
+import CountryMultiSelect from "@/components/countries/country-multi-select";
 
 /* --------------------------------------------------------------- */
 /* types                                                           */
@@ -79,7 +75,7 @@ type OrderRow = {
   country: string;
   cancelled: boolean;
   refunded: boolean;
-   status?: "paid" | "pending_payment" | "refunded" | "cancelled";
+  status?: "paid" | "pending_payment" | "refunded" | "cancelled";
   supplierOrgId: string | null;
   supplierLabel: string | null;
   items: Array<{
@@ -194,7 +190,9 @@ export default function SupplierPayables() {
   // table / filters
   const [currentPage, setCurrentPage] = useState(1);
   const [currency, setCurrency] = useState<"USD" | "GBP" | "EUR">("USD");
-  const [status, setStatus] = useState<"all" | "paid" | "refunded" | "cancelled" | "pending_payment">("all");
+  const [status, setStatus] = useState<
+    "all" | "paid" | "refunded" | "cancelled" | "pending_payment"
+  >("all");
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -271,7 +269,7 @@ export default function SupplierPayables() {
           Array.isArray(data.countries) ? [...data.countries].sort() : []
         );
         setSupplierOptions(Array.isArray(data.suppliers) ? data.suppliers : []);
-        setTotals(data.totals ?? null); // ← add this
+        setTotals(data.totals ?? null);
         setCurrentPage(1);
       } catch (err: any) {
         setError(err.message || "Unknown error");
@@ -281,26 +279,6 @@ export default function SupplierPayables() {
     }
     fetchData();
   }, [dateRange, currency, status, supplierOrgId, canShow]);
-
-  const countryOptions = useMemo(
-    () =>
-      countries.map((c) => ({
-        value: c,
-        label: countriesLib.getName(c, "en") || c,
-      })),
-    [countries]
-  );
-  const SELECT_ALL = "__ALL__";
-  const DESELECT_ALL = "__NONE__";
-
-  const selectOptions = useMemo(
-    () => [
-      { value: SELECT_ALL, label: "SELECT ALL" },
-      { value: DESELECT_ALL, label: "DESELECT ALL" },
-      ...countryOptions,
-    ],
-    [countryOptions]
-  );
 
   const filteredOrders = useMemo(() => {
     const byCountry = (o: OrderRow) =>
@@ -337,7 +315,13 @@ export default function SupplierPayables() {
     const dataForSheet = filteredOrders.map((o) => ({
       "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
       Order: o.orderNumber,
-      Status: o.cancelled ? "Cancelled" : o.refunded ? "Refunded" : (o.status === "pending_payment" ? "Pending Payment" : "Paid"),
+      Status: o.cancelled
+        ? "Cancelled"
+        : o.refunded
+          ? "Refunded"
+          : o.status === "pending_payment"
+            ? "Pending Payment"
+            : "Paid",
       Username: o.username,
       Supplier: o.supplierLabel ?? "",
       "Total Qty": o.totalQty,
@@ -448,10 +432,10 @@ export default function SupplierPayables() {
                         <div className="flex items-center justify-between pt-4 border-t mt-4">
                           <div className="text-sm text-muted-foreground">
                             {tempDateRange?.from && tempDateRange?.to
-                              ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
-                                  tempDateRange.to,
-                                  "MMM dd, yyyy"
-                                )}`
+                              ? `${format(
+                                tempDateRange.from,
+                                "MMM dd, yyyy"
+                              )} - ${format(tempDateRange.to, "MMM dd, yyyy")}`
                               : "Select date range"}
                           </div>
                           <div className="flex gap-2">
@@ -499,18 +483,24 @@ export default function SupplierPayables() {
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
-                    <Select
-                      value={status}
-                      onValueChange={(v) => setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")}
-                      className="w-32"
-                    >
+                  <Select
+                    value={status}
+                    onValueChange={(v) =>
+                      setStatus(
+                        v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment"
+                      )
+                    }
+                    className="w-32"
+                  >
                     <SelectTrigger size="sm">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
-                      <SelectItem value="pending_payment">Pending Payment</SelectItem>
+                      <SelectItem value="pending_payment">
+                        Pending Payment
+                      </SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                       <SelectItem value="refunded">Refunded</SelectItem>
                     </SelectContent>
@@ -558,7 +548,7 @@ export default function SupplierPayables() {
               </div>
             </div>
 
-            {/* Countries multi-select */}
+            {/* Countries multi-select (reusable component) */}
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-medium">Countries</span>
@@ -570,61 +560,13 @@ export default function SupplierPayables() {
                   </span>
                 )}
               </div>
-              <div className="w-full sm:w-[640px]">
-                <ReactSelect
-                  isMulti
-                  closeMenuOnSelect={false}
-                  hideSelectedOptions={false}
-                  classNamePrefix="rs"
-                  options={selectOptions}
-                  placeholder="Select country(s)"
-                  value={countryOptions.filter((o) =>
-                    selectedCountries.includes(o.value)
-                  )}
-                  onChange={(opts: any, actionMeta: any) => {
-                    const clicked = actionMeta?.option as
-                      | { value: string }
-                      | undefined;
-
-                    // Handle special options
-                    if (actionMeta?.action === "select-option" && clicked) {
-                      if (clicked.value === SELECT_ALL) {
-                        setSelectedCountries(countries); // all available from API
-                        return;
-                      }
-                      if (clicked.value === DESELECT_ALL) {
-                        setSelectedCountries([]);
-                        return;
-                      }
-                    }
-
-                    // Normal multi-select behavior
-                    const next = Array.isArray(opts) ? opts : [];
-                    setSelectedCountries(
-                      next
-                        .filter(
-                          (o) =>
-                            o.value !== SELECT_ALL && o.value !== DESELECT_ALL
-                        )
-                        .map((o) => o.value)
-                    );
-                  }}
-                  formatOptionLabel={(o: any) =>
-                    o.value === SELECT_ALL || o.value === DESELECT_ALL ? (
-                      <div className="text-xs font-medium">{o.label}</div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <ReactCountryFlag
-                          countryCode={o.value}
-                          svg
-                          style={{ width: 20 }}
-                        />
-                        <span>{o.label}</span>
-                      </div>
-                    )
-                  }
-                />
-              </div>
+              <CountryMultiSelect
+                countries={countries}
+                selectedCountries={selectedCountries}
+                onChange={setSelectedCountries}
+                className="w-full sm:w-[640px]"
+                placeholder="Select country(s)"
+              />
             </div>
 
             {totals && (
@@ -635,7 +577,9 @@ export default function SupplierPayables() {
                     All Orders Net
                   </div>
                   <div
-                    className={`text-2xl font-semibold ${moneyClass(totals.allOrdersNet)}`}
+                    className={`text-2xl font-semibold ${moneyClass(
+                      totals.allOrdersNet
+                    )}`}
                   >
                     {fmtMoney(totals.allOrdersNet)}
                   </div>
@@ -647,7 +591,9 @@ export default function SupplierPayables() {
                     Paid Orders Net
                   </div>
                   <div
-                    className={`text-2xl font-semibold ${moneyClass(totals.paidOrdersNet)}`}
+                    className={`text-2xl font-semibold ${moneyClass(
+                      totals.paidOrdersNet
+                    )}`}
                   >
                     {fmtMoney(totals.paidOrdersNet)}
                   </div>
@@ -687,10 +633,7 @@ export default function SupplierPayables() {
                           <TableHead
                             key={h}
                             className={
-                              [
-                                "Total Qty",
-                                `Total Owed (${currency})`,
-                              ].includes(h)
+                              ["Total Qty", `Total Owed (${currency})`].includes(h)
                                 ? "text-right"
                                 : ""
                             }
@@ -735,15 +678,15 @@ export default function SupplierPayables() {
                               <TableCell className="font-medium">
                                 {o.orderNumber}
                               </TableCell>
-                                                       <TableCell>
-                         {o.cancelled
-                           ? "Cancelled"
-                           : o.refunded
-                           ? "Refunded"
-                           : o.status === "pending_payment"
-                           ? "Pending Payment"
-                           : "Paid"}
-                       </TableCell>
+                              <TableCell>
+                                {o.cancelled
+                                  ? "Cancelled"
+                                  : o.refunded
+                                    ? "Refunded"
+                                    : o.status === "pending_payment"
+                                      ? "Pending Payment"
+                                      : "Paid"}
+                              </TableCell>
                               <TableCell>
                                 <Link href={`/clients/${o.orderId}/info`}>
                                   {o.username}
@@ -764,12 +707,14 @@ export default function SupplierPayables() {
                                 {more}
                               </TableCell>
                               <TableCell
-                                className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}
+                                className={`text-right font-medium ${isRed ? "text-red-600" : ""
+                                  }`}
                               >
                                 {o.totalQty}
                               </TableCell>
                               <TableCell
-                                className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}
+                                className={`text-right font-medium ${isRed ? "text-red-600" : ""
+                                  }`}
                               >
                                 {fmtMoney(o.totalOwed)}
                               </TableCell>
@@ -903,7 +848,7 @@ export default function SupplierPayables() {
                           day: "numeric",
                         });
                       }}
-                      valueFormatter={(v) => fmtMoney(Number(v))} // ← add this
+                      valueFormatter={(v) => fmtMoney(Number(v))}
                       indicator="dot"
                     />
                   }

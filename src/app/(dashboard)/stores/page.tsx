@@ -1,4 +1,3 @@
-// src/app/(dashboard)/stores/page.tsx
 "use client";
 
 import * as React from "react";
@@ -10,29 +9,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
-  DialogClose,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { MoreHorizontal, Pencil, Plus, Trash2, Search, Info } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, Trash2, Search } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 
-import {
-  Tooltip, TooltipProvider, TooltipTrigger, TooltipContent, // ← NEW
-} from "@/components/ui/tooltip";
-
-import Select from "react-select";
-import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 countriesLib.registerLocale(enLocale);
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
 
 type Store = {
   id: string;
@@ -101,7 +95,7 @@ export default function StoresPage() {
       const stores: Store[] = j.stores || [];
       setRows(stores);
 
-      // NEW: fetch register counts in parallel (simple, reliable)
+      // fetch register counts
       const pairs = await Promise.all(
         stores.map(async (s) => {
           try {
@@ -110,7 +104,7 @@ export default function StoresPage() {
             const { registers } = await r.json();
             return [s.id, Array.isArray(registers) ? registers.length : 0] as const;
           } catch {
-            return [s.id, 0] as const; // fallback
+            return [s.id, 0] as const;
           }
         })
       );
@@ -190,8 +184,6 @@ export default function StoresPage() {
         <span className="text-muted-foreground">{row.original.templateName || "—"}</span>
       ),
     },
-
-    // ───────────────────────── NEW: Registers column ─────────────────────────
     {
       id: "registers",
       header: "Registers",
@@ -199,11 +191,9 @@ export default function StoresPage() {
       cell: ({ row }) => {
         const s = row.original;
         const count = registerCounts[s.id];
-        // still loading counts
         if (typeof count === "undefined") {
           return <span className="text-muted-foreground">…</span>;
         }
-        // no registers → show + button
         if (count === 0) {
           return (
             <Button
@@ -218,7 +208,6 @@ export default function StoresPage() {
             </Button>
           );
         }
-        // some registers → clickable count
         return (
           <Button
             variant="outline"
@@ -232,8 +221,6 @@ export default function StoresPage() {
         );
       },
     },
-    // ─────────────────────────────────────────────────────────────────────────
-
     {
       accessorKey: "createdAt",
       header: "Created",
@@ -276,7 +263,6 @@ export default function StoresPage() {
         );
       },
     },
-  // include registerCounts so the cells re-render when counts arrive
   ], [registerCounts, router]);
 
   const table = useReactTable({
@@ -389,27 +375,13 @@ export default function StoresPage() {
             <p className="text-muted-foreground">Manage physical locations</p>
           </div>
 
-          {/* ── NEW: Info tooltip + dialog ─────────────────────────────── */}
-          <Dialog>
-            <TooltipProvider>
-              <Tooltip>
-                <DialogTrigger asChild>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 p-0" aria-label="What are registers?">
-                      <Info className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                </DialogTrigger>
-                <TooltipContent>What are registers?</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>About registers</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                 <p>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About registers"
+            tooltip="What are registers?"
+            content={
+              <>
+                <p>
                   <strong>Stores</strong> allow you to sell throughout a POS terminals in physical locations.
                 </p>
                 <p>
@@ -420,15 +392,9 @@ export default function StoresPage() {
                   In the table below you’ll see how many registers each store has. Click the count to view or manage them.
                   If there are none yet, click the <strong>+</strong> button to create the first one.
                 </p>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button type="button">Got it</Button>
-                </DialogClose>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          {/* ───────────────────────────────────────────────────────────── */}
+              </>
+            }
+          />
         </div>
 
         <div className="flex items-center gap-2">
@@ -471,7 +437,7 @@ export default function StoresPage() {
         emptyMessage="No stores yet."
       />
 
-      {/* Add/Edit dialog (unchanged except for import of DialogClose above) */}
+      {/* Add/Edit dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -487,7 +453,7 @@ export default function StoresPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirm (unchanged) */}
+      {/* Delete confirm */}
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -235,8 +235,8 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
                     ? "Updating..."
                     : "Creating..."
                   : isEditing
-                  ? "Update Client"
-                  : "Create Client"}
+                    ? "Update Client"
+                    : "Create Client"}
               </Button>
             </div>
           </form>

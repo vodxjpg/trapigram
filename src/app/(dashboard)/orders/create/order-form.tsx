@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
 import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Package } from "lucide-react";
 
-import ClientSelect from "../components/client-select";
-import ProductSelect from "../components/product-select";
+import ClientSelect from "../../../../components/clients/client-select";
+import ProductSelect from "../../../../components/products/product-select";
 import DiscountCoupon from "../components/discount-coupon";
 import ShippingAddress from "../components/shipping-address";
 import ShippingOptions from "../components/shipping-options";
@@ -1398,44 +1400,61 @@ export default function OrderForm() {
         {/* LEFT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
           {/* Client Selection (now fully inside the component) */}
-          <ClientSelect
-            selectedClient={selectedClient}
-            clientsLoading={clientsLoading}
-            orderGenerated={orderGenerated}
-            clients={clients}
-            filteredClients={filteredClients}
-            searchResults={searchResults}
-            searching={searching}
-            searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
-            pickClient={pickClient}
-            onGenerateOrder={generateOrder}
-          />
+          <Card>
+            <CardHeader>
+              <CardTitle>Client</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ClientSelect
+                selectedClient={selectedClient}
+                clientsLoading={clientsLoading}
+                orderGenerated={orderGenerated}
+                clients={clients}
+                filteredClients={filteredClients}
+                searchResults={searchResults}
+                searching={searching}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                pickClient={pickClient}
+                onGenerateOrder={generateOrder}
+              />
+            </CardContent>
+          </Card>
+
           {/* Product Selection */}
 
-          <ProductSelect
-            orderGenerated={orderGenerated}
-            orderItems={orderItems}
-            clientCountry={clientCountry}
-            stockErrors={stockErrors}
-            removeProduct={removeProduct}
-            updateQuantity={updateQuantity}
-            addProduct={addProduct}
-            productsLoading={productsLoading}
-            selectedProduct={selectedProduct}
-            prodTerm={prodTerm}
-            setProdTerm={setProdTerm}
-            filteredProducts={filteredProducts}
-            prodResults={prodResults}
-            prodSearching={prodSearching}
-            products={products}
-            pickProduct={pickProduct}
-            groupByCategory={groupByCategory}
-            quantityText={quantityText}
-            setQuantityText={setQuantityText}
-            parseQty={parseQty}
-          />
+          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" /> Product Selection
+              </CardTitle>
+            </CardHeader>
 
+            <CardContent className="space-y-4">
+              <ProductSelect
+                orderGenerated={orderGenerated}
+                orderItems={orderItems}
+                clientCountry={clientCountry}
+                stockErrors={stockErrors}
+                removeProduct={removeProduct}
+                updateQuantity={updateQuantity}
+                addProduct={addProduct}
+                productsLoading={productsLoading}
+                selectedProduct={selectedProduct}
+                prodTerm={prodTerm}
+                setProdTerm={setProdTerm}
+                filteredProducts={filteredProducts}
+                prodResults={prodResults}
+                prodSearching={prodSearching}
+                products={products}
+                pickProduct={pickProduct}
+                groupByCategory={groupByCategory}
+                quantityText={quantityText}
+                setQuantityText={setQuantityText}
+                parseQty={parseQty}
+              />
+            </CardContent>
+          </Card>
           {/* Discount Coupon (moved into its own component) */}
           <DiscountCoupon
             orderGenerated={orderGenerated}

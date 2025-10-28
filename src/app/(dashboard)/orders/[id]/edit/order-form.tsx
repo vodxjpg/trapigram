@@ -16,8 +16,9 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tag } from "lucide-react";
 import { toast } from "sonner";
+import { Package } from "lucide-react";
 
-import ProductSelect from "../../components/product-select";
+import ProductSelect from "../../../../../components/products/product-select";
 import DiscountCoupon from "../../components/discount-coupon";
 import ShippingAddress from "../../components/shipping-address";
 import ShippingOptions from "../../components/shipping-options";
@@ -1247,40 +1248,50 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           </Card>
 
           {/* Product Selection (mirror Create page layout/UX) */}
-          <ProductSelect
-            // Gate: in the edit page, the order already exists → selector enabled
-            orderGenerated={true}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" /> Product Selection
+              </CardTitle>
+            </CardHeader>
 
-            // Current cart lines and context
-            orderItems={orderItems}
-            clientCountry={clientCountry}
-            stockErrors={stockErrors}
+            <CardContent className="space-y-4">
+              <ProductSelect
+                // Gate: in the edit page, the order already exists → selector enabled
+                orderGenerated={true}
 
-            // Handlers (removeProduct expects an idx in child; we adapt above)
-            removeProduct={removeProductForChild}
-            updateQuantity={updateQuantity}
-            addProduct={addProduct}
+                // Current cart lines and context
+                orderItems={orderItems}
+                clientCountry={clientCountry}
+                stockErrors={stockErrors}
 
-            // Product picker state (unchanged)
-            productsLoading={productsLoading}
-            // Convert parent token ("id::variation") to child's token ("id:variation|base")
-            selectedProduct={toChildToken(selectedProduct)}
-            prodTerm={prodTerm}
-            setProdTerm={setProdTerm}
-            filteredProducts={filteredProducts}
-            prodResults={prodResults}
-            prodSearching={prodSearching}
-            products={products}
+                // Handlers (removeProduct expects an idx in child; we adapt above)
+                removeProduct={removeProductForChild}
+                updateQuantity={updateQuantity}
+                addProduct={addProduct}
 
-            // Helpers
-            pickProduct={pickProductForChild}
-            groupByCategory={groupByCategory}
+                // Product picker state (unchanged)
+                productsLoading={productsLoading}
+                // Convert parent token ("id::variation") to child's token ("id:variation|base")
+                selectedProduct={toChildToken(selectedProduct)}
+                prodTerm={prodTerm}
+                setProdTerm={setProdTerm}
+                filteredProducts={filteredProducts}
+                prodResults={prodResults}
+                prodSearching={prodSearching}
+                products={products}
 
-            // Quantity input state (unchanged)
-            quantityText={quantityText}
-            setQuantityText={setQuantityText}
-            parseQty={parseQty}
-          />
+                // Helpers
+                pickProduct={pickProductForChild}
+                groupByCategory={groupByCategory}
+
+                // Quantity input state (unchanged)
+                quantityText={quantityText}
+                setQuantityText={setQuantityText}
+                parseQty={parseQty}
+              />
+            </CardContent>
+          </Card>
 
           {/* Coupon header (no Card). Shows current code and toggle to apply a new one */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1404,6 +1415,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 }
