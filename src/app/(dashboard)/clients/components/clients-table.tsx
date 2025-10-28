@@ -381,13 +381,14 @@ export function ClientsTable() {
                 <span className="font-mono">{selected.points}</span>
               </p>
 
-              {/* Sign selector (mobile-friendly) */}
-              <div className="grid grid-cols-2 gap-2 mb-2">
+              {/* Sign selector — stacked on mobile, side-by-side on ≥sm */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                 <Button
                   type="button"
                   variant={sign === "add" ? "default" : "outline"}
                   className="w-full"
                   onClick={() => setSign("add")}
+                  aria-pressed={sign === "add"}
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add
@@ -397,6 +398,7 @@ export function ClientsTable() {
                   variant={sign === "subtract" ? "destructive" : "outline"}
                   className="w-full"
                   onClick={() => setSign("subtract")}
+                  aria-pressed={sign === "subtract"}
                 >
                   <Minus className="h-4 w-4 mr-2" />
                   Subtract
