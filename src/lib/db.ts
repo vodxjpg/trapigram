@@ -82,6 +82,7 @@ interface DB {
     country: string | null;
     levelId: string;
     referredBy: string;
+    metadata: string | null;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -541,10 +542,11 @@ interface DB {
   cartProducts: {
     id: string;
     cartId: string;
-    productId: string | null;          // nullable now
-    affiliateProductId: string | null; // NEW
+    productId: string | null;
+    variationId: string | null;          
+    affiliateProductId: string | null; 
     quantity: number;
-    unitPrice: number;                 // pts OR €
+    unitPrice: number;                
     createdAt: Date;
     updatedAt: Date;
   }

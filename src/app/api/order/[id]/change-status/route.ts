@@ -823,17 +823,48 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     );
     if (exists) continue;
 
-    // ensure client exists in supplier org
-    const { rows: [oldClient] } = await pool.query(`SELECT * FROM clients WHERE id = $1`, [o.clientId]);
-    const { rows: [found] } = await pool.query(
-      `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2 LIMIT 1`,
-      [oldClient.userId, orgId]);
-    const supplierClientId = found?.id ?? uuidv4();
-    if (!found) {
+    // ensure client exists in supplier org (dedupe; set metadata on first copy)
+    const { rows: [oldClient] } = await pool.query(
+      `SELECT * FROM clients WHERE id = $1`,
+      [o.clientId]
+    );
+    let supplierClientId: string | null = null;
+    if (oldClient?.userId) {
+      const q1 = await pool.query(
+        `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2 LIMIT 1`,
+        [oldClient.userId, orgId],
+      );
+      supplierClientId = q1.rows[0]?.id ?? null;
+    } else {
+      const q2 = await pool.query(
+        `SELECT id FROM clients
+           WHERE "organizationId" = $1
+             AND (
+                  (email IS NOT NULL AND lower(email) = lower($2))
+               OR ("phoneNumber" IS NOT NULL AND "phoneNumber" = $3)
+             )
+           LIMIT 1`,
+        [orgId, oldClient?.email ?? "", oldClient?.phoneNumber ?? ""],
+      );
+      supplierClientId = q2.rows[0]?.id ?? null;
+    }
+    supplierClientId = supplierClientId ?? uuidv4();
+    if (!oldClient?.userId && !oldClient?.email && !oldClient?.phoneNumber) {
+      // no stable dedupe keys; still proceed with a single insert when missing
+    }
+    if (!supplierClientId || supplierClientId.length !== 36) {
+      supplierClientId = uuidv4();
+    }
+    if (!(await pool.query(`SELECT 1 FROM clients WHERE id = $1`, [supplierClientId])).rowCount) {
       await pool.query(
-        `INSERT INTO clients (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
-        [supplierClientId, oldClient.userId, orgId, oldClient.username, oldClient.firstName, oldClient.lastName, oldClient.email, oldClient.phoneNumber, oldClient.country],
+        `INSERT INTO clients (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"metadata","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())`,
+        [
+          supplierClientId, oldClient?.userId ?? null, orgId,
+          oldClient?.username ?? "", oldClient?.firstName ?? "", oldClient?.lastName ?? "",
+          oldClient?.email ?? null, oldClient?.phoneNumber ?? null, oldClient?.country ?? null,
+          JSON.stringify({ source: "dropshipper", originOrganizationId: o.organizationId, originClientId: oldClient?.id ?? null }),
+        ],
       );
     }
     // create supplier cart

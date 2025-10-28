@@ -746,35 +746,57 @@ export async function POST(req: NextRequest) {
         const group = groupedArray[i];
         createdSupplierOrgs.add(group.organizationId);
 
-        // ensure client in supplier org
-        const oldClient = await pool.query(
+        // ensure client in supplier org (dedupe by userId, else email/phone for guests)
+        const oldClientQ = await pool.query(
           `SELECT * FROM "clients" WHERE "id" = $1`,
           [oldOrder.rows[0].clientId],
         );
-        const checkClient = await pool.query(
-          `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2`,
-          [oldClient.rows[0].userId, group.organizationId],
-        );
-        const newClientId = checkClient.rows[0]?.id ?? uuidv4();
-        if (!checkClient.rows[0]) {
+        const oldC = oldClientQ.rows[0];
+        let existingClientId: string | null = null;
+        if (oldC?.userId) {
+          const q1 = await pool.query(
+            `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2 LIMIT 1`,
+            [oldC.userId, group.organizationId],
+          );
+          existingClientId = q1.rows[0]?.id ?? null;
+        } else {
+          const q2 = await pool.query(
+            `SELECT id FROM clients
+               WHERE "organizationId" = $1
+                 AND (
+                      (email IS NOT NULL AND lower(email) = lower($2))
+                   OR ("phoneNumber" IS NOT NULL AND "phoneNumber" = $3)
+                 )
+               LIMIT 1`,
+            [group.organizationId, oldC?.email ?? "", oldC?.phoneNumber ?? ""],
+          );
+          existingClientId = q2.rows[0]?.id ?? null;
+        }
+        const newClientId = existingClientId ?? uuidv4();
+        if (!existingClientId) {
           await pool.query(
             `INSERT INTO "clients"
-           (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+             (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"metadata","createdAt","updatedAt")
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())`,
             [
               newClientId,
-              oldClient.rows[0].userId,
+              oldC?.userId ?? null,
               group.organizationId,
-              oldClient.rows[0].username,
-              oldClient.rows[0].firstName,
-              oldClient.rows[0].lastName,
-              oldClient.rows[0].email,
-              oldClient.rows[0].phoneNumber,
-              oldClient.rows[0].country,
+              oldC?.username ?? "",
+              oldC?.firstName ?? "",
+              oldC?.lastName ?? "",
+              oldC?.email ?? null,
+              oldC?.phoneNumber ?? null,
+              oldC?.country ?? null,
+              JSON.stringify({
+                source: "dropshipper",
+                originOrganizationId: oldOrder.rows[0].organizationId,
+                originClientId: oldC?.id ?? null,
+              }),
             ],
           );
         }
-
+ 
         // supplier cart
         const newCartId = uuidv4();
         const newCartHash = encryptSecretNode(
