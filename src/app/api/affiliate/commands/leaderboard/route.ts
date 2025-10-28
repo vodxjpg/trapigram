@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
         ON b."clientId" = c.id
        AND b."organizationId" = c."organizationId"
      WHERE c."organizationId" = $1
+       -- Exclude dropshipper-sourced clients for this organization
+       AND (c.metadata->>'source') IS DISTINCT FROM 'dropshipper'
   ORDER BY total DESC NULLS LAST, c.username NULLS LAST, c."userId" ASC
      LIMIT $2
   `;
