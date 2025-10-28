@@ -21,6 +21,8 @@ const CreateSchema = z.object({
   country: z.string().length(2).optional(),
   storeId: z.string().optional(),     // used to compose channel
   registerId: z.string().optional(),  // used to compose channel
+  /** NEW: if true, and we detect Walk-in, we close any existing POS cart for this outlet and create a fresh cart */
+  resetIfWalkIn: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -37,6 +39,23 @@ export async function POST(req: NextRequest) {
 
       const input = CreateSchema.parse(await req.json());
       mark("parse_body");
+
+      const resetIfWalkIn = !!input.resetIfWalkIn;
+
+      /** Helper: detect if the given client is a Walk-in guest */
+      const isWalkIn = async (clientId: string): Promise<boolean> => {
+        const { rows } = await pool.query(
+          `SELECT LOWER(COALESCE("firstName", '')) AS fn,
+                  LOWER(COALESCE(username,   '')) AS un
+             FROM clients
+            WHERE id=$1 AND "organizationId"=$2
+            LIMIT 1`,
+          [clientId, organizationId]
+        );
+        if (!rows.length) return false;
+        const r = rows[0];
+        return r.fn === "walk-in" || r.un LIKE 'walkin-%';
+      };
 
       /* 1) Resolve non-null desired country (payload → org settings → 'US') */
       const desiredCountry: string = await (async () => {
@@ -121,23 +140,32 @@ export async function POST(req: NextRequest) {
             LIMIT 1`,
           [clientId, organizationId, channelVal]
         );
+
         if (exact.length) {
           const cart = exact[0];
-          if ((cart.country || "").toUpperCase() !== desiredCountry) {
-            await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
-            cart.country = desiredCountry;
-          }
-          mark("reuse_exact");
-          return NextResponse.json(
-            { newCart: cart, reused: true },
-            {
-              status: 201,
-              headers: {
-                ...BASE_HEADERS,
-                "Server-Timing": encodeServerTiming(marks),
-              },
+
+          // If asked to reset and this is Walk-in, close old & create fresh
+          if (resetIfWalkIn && (await isWalkIn(clientId))) {
+            await pool.query(`UPDATE carts SET status=false, "updatedAt"=NOW() WHERE id=$1`, [cart.id]);
+            mark("close_old_cart");
+            // fall through to creation path below (section 6)
+          } else {
+            if ((cart.country || "").toUpperCase() !== desiredCountry) {
+              await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
+              cart.country = desiredCountry;
             }
-          );
+            mark("reuse_exact");
+            return NextResponse.json(
+              { newCart: cart, reused: true },
+              {
+                status: 201,
+                headers: {
+                  ...BASE_HEADERS,
+                  "Server-Timing": encodeServerTiming(marks),
+                },
+              }
+            );
+          }
         }
       }
 
@@ -153,27 +181,35 @@ export async function POST(req: NextRequest) {
           LIMIT 1`,
         [clientId, organizationId]
       );
+
       if (anyPos.length) {
         const cart = anyPos[0];
-        if (channelVal !== "pos-" && cart.channel === "pos-") {
-          await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [channelVal, cart.id]);
-          cart.channel = channelVal;
-        }
-        if ((cart.country || "").toUpperCase() !== desiredCountry) {
-          await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
-          cart.country = desiredCountry;
-        }
-        mark("reuse_any_pos");
-        return NextResponse.json(
-          { newCart: cart, reused: true },
-          {
-            status: 201,
-            headers: {
-              ...BASE_HEADERS,
-              "Server-Timing": encodeServerTiming(marks),
-            },
+
+        if (resetIfWalkIn && (await isWalkIn(clientId))) {
+          await pool.query(`UPDATE carts SET status=false, "updatedAt"=NOW() WHERE id=$1`, [cart.id]);
+          mark("close_old_cart");
+          // fall through to creation path below
+        } else {
+          if (channelVal !== "pos-" && cart.channel === "pos-") {
+            await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [channelVal, cart.id]);
+            cart.channel = channelVal;
           }
-        );
+          if ((cart.country || "").toUpperCase() !== desiredCountry) {
+            await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
+            cart.country = desiredCountry;
+          }
+          mark("reuse_any_pos");
+          return NextResponse.json(
+            { newCart: cart, reused: true },
+            {
+              status: 201,
+              headers: {
+                ...BASE_HEADERS,
+                "Server-Timing": encodeServerTiming(marks),
+              },
+            }
+          );
+        }
       }
 
       /* 6) Create the cart (no shipping method for walk-in POS) */

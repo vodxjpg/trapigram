@@ -77,6 +77,9 @@ export function POSInterface() {
   // cart
   const [cartId, setCartId] = useState<string | null>(null)
   const [lines, setLines] = useState<CartLine[]>([])
+  const linesRef = useRef<CartLine[]>([])
+  useEffect(() => { linesRef.current = lines }, [lines])
+
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -183,7 +186,7 @@ export function POSInterface() {
   // require store→outlet selection
   const forceSelectDialog = !storeId || !outletId
 
-  // When outlet changes, restore its cart if any
+  // When outlet changes, just persist the choice and clear any cached cart id
   useEffect(() => {
     if (!outletId) {
       setCartId(null)
@@ -192,16 +195,49 @@ export function POSInterface() {
     }
     if (typeof window !== "undefined") {
       localStorage.setItem(LS_KEYS.OUTLET, outletId)
-      const savedCartId = localStorage.getItem(LS_KEYS.CART(outletId))
-      if (savedCartId) {
-        setCartId(savedCartId)
-        refreshCart(savedCartId)
-      } else {
-        setCartId(null)
-        setLines([])
+      localStorage.removeItem(LS_KEYS.CART(outletId))
+    }
+    setCartId(null)
+    setLines([])
+  }, [outletId])
+
+  // After outlet + store + customer are known → open a clean cart for Walk-in
+  useEffect(() => {
+    const openFreshCartIfNeeded = async () => {
+      if (!storeId || !outletId || !selectedCustomer?.id) return
+      try {
+        // Always request a clean cart for Walk-in on outlet open.
+        const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+        const body = {
+          clientId: selectedCustomer.id,
+          country: resolveCartCountry(),
+          storeId,
+          registerId: outletId,
+          resetIfWalkIn: true,
+        }
+        const res = await fetch("/api/pos/cart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(data?.error || "Failed to prepare cart")
+        }
+        const newCartId = data?.newCart?.id || data?.cart?.id || data?.id
+        if (!newCartId) throw new Error("No cart id returned")
+        setCartId(newCartId)
+        setLines([]) // start clean
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
+        }
+      } catch (e: any) {
+        setError(e?.message || "Failed to prepare POS cart.")
       }
     }
-  }, [outletId])
+    void openFreshCartIfNeeded()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeId, outletId, selectedCustomer?.id])
 
   // fetch categories
   useEffect(() => {
@@ -371,6 +407,20 @@ export function POSInterface() {
 
   const productKeyOf = (p: GridProduct) => `${p.productId}:${p.variationId ?? "base"}`
 
+  /** Map server lines → UI lines */
+  const mapServerLines = useCallback((list: any[]) => {
+    return list.map((l) => ({
+      productId: l.id,
+      variationId: l.variationId ?? null,
+      title: titleFor(l.id, l.variationId ?? null, l.title),
+      image: l.image ?? null,
+      sku: l.sku ?? null,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.subtotal),
+    } as CartLine))
+  }, [titleFor])
+
   const ensureCart = async (clientId: string) => {
     if (cartId || creatingCartRef.current) return cartId
     if (!storeId || !outletId) {
@@ -385,6 +435,7 @@ export function POSInterface() {
         country: resolveCartCountry(),
         storeId,
         registerId: outletId,
+        // no reset here; this is used during "add to cart"
       }
       const res = await fetch("/api/pos/cart", {
         method: "POST",
@@ -414,20 +465,77 @@ export function POSInterface() {
       if (!res.ok) return
       const j = await res.json()
       const list: any[] = j.lines || j.resultCartProducts || []
-      setLines(list.map((l) => ({
-        productId: l.id,
-        variationId: l.variationId ?? null,
-        title: titleFor(l.id, l.variationId ?? null, l.title),
-        image: l.image ?? null,
-        sku: l.sku ?? null,
-        quantity: Number(l.quantity),
-        unitPrice: Number(l.unitPrice),
-        subtotal: Number(l.subtotal),
-      })))
+      setLines(mapServerLines(list))
     } catch (e: any) {
       setError(e?.message || "Failed to refresh cart.")
     }
   }
+
+  /** ---------- Optimistic helpers ---------- */
+
+  const upsertOptimistic = (p: GridProduct) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === p.productId && (l.variationId ?? null) === (p.variationId ?? null))
+      if (idx >= 0) {
+        const unitPrice = Number(prev[idx].unitPrice ?? p.priceForDisplay ?? 0)
+        const quantity = prev[idx].quantity + 1
+        const subtotal = +(quantity * unitPrice).toFixed(2)
+        const updated = { ...prev[idx], quantity, unitPrice, subtotal }
+        const next = prev.slice()
+        next[idx] = updated
+        return next
+      }
+      const unitPrice = Number(p.priceForDisplay || 0)
+      const line: CartLine = {
+        productId: p.productId,
+        variationId: p.variationId ?? null,
+        title: p.title,
+        image: p.image ?? null,
+        sku: null,
+        quantity: 1,
+        unitPrice,
+        subtotal: +unitPrice.toFixed(2),
+      }
+      return [line, ...prev]
+    })
+  }
+
+  const optimisticInc = (line: CartLine) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
+      if (idx === -1) return prev
+      const unitPrice = Number(prev[idx].unitPrice)
+      const quantity = prev[idx].quantity + 1
+      const subtotal = +(quantity * unitPrice).toFixed(2)
+      const next = prev.slice()
+      next[idx] = { ...prev[idx], quantity, subtotal }
+      return next
+    })
+  }
+
+  const optimisticDec = (line: CartLine) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
+      if (idx === -1) return prev
+      const unitPrice = Number(prev[idx].unitPrice)
+      const quantity = Math.max(0, prev[idx].quantity - 1)
+      if (quantity === 0) {
+        const next = prev.slice()
+        next.splice(idx, 1)
+        return next
+      }
+      const subtotal = +(quantity * unitPrice).toFixed(2)
+      const next = prev.slice()
+      next[idx] = { ...prev[idx], quantity, subtotal }
+      return next
+    })
+  }
+
+  const optimisticRemove = (line: CartLine) => {
+    setLines(prev => prev.filter(l => !(l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))))
+  }
+
+  /** ---------- Actions (now optimistic) ---------- */
 
   const addToCart = async (p: GridProduct) => {
     try {
@@ -444,8 +552,15 @@ export function POSInterface() {
         return next
       })
 
+      // Optimistic update immediately
+      upsertOptimistic(p)
+
       const cid = await ensureCart(selectedCustomer.id)
-      if (!cid) return
+      if (!cid) {
+        // could not ensure cart → revert by refreshing truth (clears optimistic)
+        if (cartId) await refreshCart(cartId)
+        return
+      }
 
       const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
       const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
@@ -460,26 +575,20 @@ export function POSInterface() {
       const j = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(j?.error || "Failed to add to cart")
+        // reconcile with server truth
+        await refreshCart(cid)
         return
       }
 
       if (Array.isArray(j.lines)) {
-        setLines(j.lines.map((l: any) => ({
-          productId: l.id,
-          variationId: l.variationId ?? null,
-          title: titleFor(l.id, l.variationId ?? null, l.title),
-          image: l.image ?? null,
-          sku: l.sku ?? null,
-          quantity: Number(l.quantity),
-          unitPrice: Number(l.unitPrice),
-          subtotal: Number(l.subtotal),
-        })))
+        setLines(mapServerLines(j.lines))
         return
       }
 
       await refreshCart(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
+      if (cartId) await refreshCart(cartId)
     } finally {
       const key = productKeyOf(p)
       setAddingKeys(prev => {
@@ -492,76 +601,70 @@ export function POSInterface() {
 
   const inc = async (line: CartLine) => {
     if (!cartId) return
-    const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: line.productId,
-        variationId: line.variationId,
-        action: "add",
-      }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) { setError(j?.error || "Failed to update quantity"); return }
-    setLines((j.lines || []).map((l: any) => ({
-      productId: l.id,
-      variationId: l.variationId ?? null,
-      title: titleFor(l.id, l.variationId ?? null, l.title),
-      image: l.image ?? null,
-      sku: l.sku ?? null,
-      quantity: Number(l.quantity),
-      unitPrice: Number(l.unitPrice),
-      subtotal: Number(l.subtotal),
-    })))
+    // optimistic
+    optimisticInc(line)
+    try {
+      const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: line.productId,
+          variationId: line.variationId,
+          action: "add",
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(j?.error || "Failed to update quantity"); await refreshCart(cartId); return }
+      if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
+    } catch (e: any) {
+      setError(e?.message || "Failed to update quantity")
+      await refreshCart(cartId)
+    }
   }
 
   const dec = async (line: CartLine) => {
     if (!cartId) return
-    const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: line.productId,
-        variationId: line.variationId,
-        action: "subtract",
-      }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) { setError(j?.error || "Failed to update quantity"); return }
-    setLines((j.lines || []).map((l: any) => ({
-      productId: l.id,
-      variationId: l.variationId ?? null,
-      title: titleFor(l.id, l.variationId ?? null, l.title),
-      image: l.image ?? null,
-      sku: l.sku ?? null,
-      quantity: Number(l.quantity),
-      unitPrice: Number(l.unitPrice),
-      subtotal: Number(l.subtotal),
-    })))
+    // optimistic
+    optimisticDec(line)
+    try {
+      const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: line.productId,
+          variationId: line.variationId,
+          action: "subtract",
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(j?.error || "Failed to update quantity"); await refreshCart(cartId); return }
+      if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
+    } catch (e: any) {
+      setError(e?.message || "Failed to update quantity")
+      await refreshCart(cartId)
+    }
   }
 
   const removeLine = async (line: CartLine) => {
     if (!cartId) return
-    const res = await fetch(`/api/pos/cart/${cartId}/remove-product`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: line.productId,
-        variationId: line.variationId,
-      }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) { setError(j?.error || "Failed to remove item"); return }
-    setLines((j.lines || []).map((l: any) => ({
-      productId: l.id,
-      variationId: l.variationId ?? null,
-      title: titleFor(l.id, l.variationId ?? null, l.title),
-      image: l.image ?? null,
-      sku: l.sku ?? null,
-      quantity: Number(l.quantity),
-      unitPrice: Number(l.unitPrice),
-      subtotal: Number(l.subtotal),
-    })))
+    // optimistic
+    optimisticRemove(line)
+    try {
+      const res = await fetch(`/api/pos/cart/${cartId}/remove-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: line.productId,
+          variationId: line.variationId,
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(j?.error || "Failed to remove item"); await refreshCart(cartId); return }
+      if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
+    } catch (e: any) {
+      setError(e?.message || "Failed to remove item")
+      await refreshCart(cartId)
+    }
   }
 
   const onCompleteCheckout = (orderId: string, parked?: boolean) => {
