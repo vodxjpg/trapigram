@@ -1,11 +1,10 @@
-// src/app/(dashboard)/pos/components/cart.tsx
 "use client"
 
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { Minus, Plus, Trash2 } from "lucide-react"
+import { Minus, Plus, Trash2, Loader2 } from "lucide-react"
 
 type CartLine = {
   productId: string
@@ -33,8 +32,10 @@ type CartProps = {
   subtotal: number
   discountAmount: number
   total: number
-  // NEW: layout variant
+  // layout variant
   variant?: "inline" | "sheet"
+  // NEW: which cart lines are pending a server update
+  pendingKeys?: Set<string>
 }
 
 function InitialsSquare({ text }: { text: string }) {
@@ -68,11 +69,15 @@ export function Cart({
   discountAmount,
   total,
   variant = "inline",
+  pendingKeys,
 }: CartProps) {
   const wrapper =
     variant === "inline"
       ? "flex w-full flex-col border-l bg-card lg:w-96"
       : "flex h-full w-full flex-col bg-card rounded-t-2xl"
+
+  const keyOf = (l: CartLine) => `${l.productId}:${l.variationId ?? "base"}`
+  const isPending = (l: CartLine) => pendingKeys?.has(keyOf(l)) ?? false
 
   return (
     <div className={wrapper}>
@@ -89,51 +94,75 @@ export function Cart({
           </div>
         ) : (
           <div className="space-y-3">
-            {lines.map((l) => (
-              <Card key={`${l.productId}:${l.variationId ?? "base"}`} className="p-3">
-                <div className="flex gap-3">
-                  {l.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={l.image} alt={l.title} className="h-16 w-16 rounded-md object-cover" />
-                  ) : (
-                    <InitialsSquare text={l.title} />
+            {lines.map((l) => {
+              const pending = isPending(l)
+              return (
+                <Card key={keyOf(l)} className="p-3 relative">
+                  {/* Subtle overlay while pending to block spam clicks */}
+                  {pending && (
+                    <div className="absolute inset-0 z-10 bg-black/5 backdrop-blur-[1px] rounded-md" />
                   )}
-                  <div className="flex flex-1 flex-col">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-medium text-sm text-foreground line-clamp-2">{l.title}</h3>
-                        <p className="text-xs text-muted-foreground">Unit: ${Number(l.unitPrice).toFixed(2)}</p>
-                      </div>
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onRemove(l)}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                  <div className="flex gap-3">
+                    {l.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={l.image} alt={l.title} className="h-16 w-16 rounded-md object-cover" />
+                    ) : (
+                      <InitialsSquare text={l.title} />
+                    )}
+                    <div className="flex flex-1 flex-col">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-medium text-sm text-foreground line-clamp-2">{l.title}</h3>
+                          <p className="text-xs text-muted-foreground">Unit: ${Number(l.unitPrice).toFixed(2)}</p>
+                        </div>
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="icon"
-                          className="h-7 w-7 bg-transparent"
-                          onClick={() => onDec(l)}
+                          className="h-6 w-6"
+                          onClick={() => !pending && onRemove(l)}
+                          disabled={pending}
                         >
-                          <Minus className="h-3 w-3" />
-                        </Button>
-                        <span className="w-8 text-center text-sm font-medium">{l.quantity}</span>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-7 w-7 bg-transparent"
-                          onClick={() => onInc(l)}
-                        >
-                          <Plus className="h-3 w-3" />
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
-                      <p className="font-semibold text-sm">${(l.subtotal).toFixed(2)}</p>
+
+                      <div className="mt-2 flex items-center justify-between">
+                        <div className="relative flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7 bg-transparent"
+                            onClick={() => !pending && onDec(l)}
+                            disabled={pending}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </Button>
+                          <span className="w-8 text-center text-sm font-medium">{l.quantity}</span>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7 bg-transparent"
+                            onClick={() => !pending && onInc(l)}
+                            disabled={pending}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+
+                          {/* Tiny inline spinner when pending */}
+                          {pending && (
+                            <span className="ml-2 inline-flex items-center">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="font-semibold text-sm">${(l.subtotal).toFixed(2)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
       </ScrollArea>

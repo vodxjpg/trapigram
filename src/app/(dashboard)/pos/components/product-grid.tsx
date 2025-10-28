@@ -18,8 +18,10 @@ export type GridProduct = {
 type ProductGridProps = {
   products: GridProduct[]
   onAddToCart: (p: GridProduct) => void
-  /** Set of product keys currently being added: `${productId}:${variationId ?? "base"}` */
+  /** Tiles briefly show this spinner after optimistic add */
   addingKeys?: Set<string>
+  /** Tiles remain disabled (no clicks) while the network call is in-flight */
+  disabledKeys?: Set<string>
 }
 
 function InitialsCircle({ text }: { text: string }) {
@@ -37,22 +39,24 @@ function InitialsCircle({ text }: { text: string }) {
   )
 }
 
-export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridProps) {
+export function ProductGrid({ products, onAddToCart, addingKeys, disabledKeys }: ProductGridProps) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {products.map((product) => {
           const key = `${product.productId}:${product.variationId ?? "base"}`
           const isLoading = addingKeys?.has(key) ?? false
+          const isDisabled = disabledKeys?.has(key) ?? false
 
           return (
             <Card
               key={key}
               className="group relative cursor-pointer overflow-hidden transition-all hover:shadow-lg"
               onClick={() => {
-                if (!isLoading) onAddToCart(product)
+                if (!isLoading && !isDisabled) onAddToCart(product)
               }}
               aria-busy={isLoading}
+              aria-disabled={isDisabled}
             >
               <div className="relative aspect-square bg-muted">
                 {product.image ? (
@@ -67,8 +71,8 @@ export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridPr
                   <InitialsCircle text={product.title} />
                 )}
 
-                {/* Hover CTA (hidden while loading) */}
-                {!isLoading && (
+                {/* Hover CTA (hidden while loading/disabled) */}
+                {!isLoading && !isDisabled && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all group-hover:bg-black/10">
                     <Button
                       size="icon"
@@ -83,11 +87,16 @@ export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridPr
                   </div>
                 )}
 
-                {/* Loading overlay to block spam clicks */}
+                {/* Quick spinner overlay (very short) */}
                 {isLoading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
                   </div>
+                )}
+
+                {/* Disabled glass if network in-flight but spinner already gone */}
+                {!isLoading && isDisabled && (
+                  <div className="absolute inset-0 z-10 bg-black/10" />
                 )}
               </div>
 
