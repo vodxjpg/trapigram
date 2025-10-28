@@ -184,41 +184,56 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     return () => { ignore = true; };
   }, [open, cartId, methodsReload]);
 
-  // When Niftipay is among methods, fetch its networks
+  // Helper: robust Niftipay detection
+  const looksNiftipayMethod = (m?: PaymentMethodRow | null) => {
+    if (!m) return false;
+    const id = (m.id || "").toLowerCase();
+    const name = (m.name || "").toLowerCase();
+    return id.includes("niftipay") || name.includes("niftipay");
+  };
+
+  // When Niftipay is among methods, fetch its networks (revert to default behavior & simpler deps)
   useEffect(() => {
     if (!open) return;
-    const hasNifti = paymentMethods.some((m) => /niftipay/i.test(m.name || ""));
+    const hasNifti = paymentMethods.some(looksNiftipayMethod);
     if (!hasNifti) {
       setNiftipayNetworks([]);
       setSelectedNiftipay("");
       return;
     }
+    let ignore = false;
     (async () => {
-      setNiftipayLoading(true);
       try {
+        setNiftipayLoading(true);
         const nets = await fetchNiftipayNetworks();
+        if (ignore) return;
         setNiftipayNetworks(nets);
+        // auto-select first network on initial load
         if (!selectedNiftipay && nets[0]) {
           setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
         }
       } catch {
-        setNiftipayNetworks([]);
-        setSelectedNiftipay("");
+        if (!ignore) {
+          setNiftipayNetworks([]);
+          setSelectedNiftipay("");
+        }
       } finally {
-        setNiftipayLoading(false);
+        if (!ignore) setNiftipayLoading(false);
       }
     })();
-  }, [open, paymentMethods, selectedNiftipay]);
+    return () => { ignore = true; };
+    // NOTE: do not depend on selectedNiftipay here; we only want to fetch when methods open/change
+  }, [open, paymentMethods]);
 
   const currentMethodIsNiftipay = useMemo(() => {
     const m = paymentMethods.find((pm) => pm.id === currentMethodId);
-    return !!m && /niftipay/i.test(m.name || "");
+    return looksNiftipayMethod(m);
   }, [paymentMethods, currentMethodId]);
 
   const niftiInPayments = useMemo(() => {
     return payments.some((p) => {
-      const name = paymentMethods.find((pm) => pm.id === p.methodId)?.name || "";
-      return /niftipay/i.test(name);
+      const pm = paymentMethods.find((pm) => pm.id === p.methodId);
+      return looksNiftipayMethod(pm);
     });
   }, [payments, paymentMethods]);
 
@@ -268,7 +283,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   const buildNiftipayIfAny = () => {
     const niftiAmount = payments
-      .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
+      .filter(p => looksNiftipayMethod(paymentMethods.find(pm => pm.id === p.methodId)))
       .reduce((s, p) => s + p.amount, 0);
 
     if (niftiAmount > 0 && selectedNiftipay) {
@@ -486,29 +501,27 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               )}
             </div>
 
-            {/* Niftipay network picker */}
+            {/* Niftipay network picker (reverted to original default UI) */}
             {methodsLoaded && !noPosMethods && currentMethodIsNiftipay && (
               <div className="space-y-2">
                 <Label>Crypto Network</Label>
-                {niftipayLoading ? (
-                  <SkeletonBlock className="h-10" />
-                ) : (
-                  <div>
-                    <select
-                      className="w-full border rounded-md px-3 h-10 bg-background"
-                      value={selectedNiftipay}
-                      onChange={(e) => setSelectedNiftipay(e.target.value)}
-                      disabled={niftipayNetworks.length === 0}
-                    >
-                      {!selectedNiftipay && <option value="">{niftipayNetworks.length ? "Select network" : "No networks available"}</option>}
-                      {niftipayNetworks.map((n) => (
-                        <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
-                          {n.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <select
+                    className="w-full border rounded-md px-3 h-10 bg-background"
+                    value={selectedNiftipay}
+                    onChange={(e) => setSelectedNiftipay(e.target.value)}
+                    disabled={niftipayLoading || niftipayNetworks.length === 0}
+                  >
+                    {!selectedNiftipay && (
+                      <option value="">{niftipayLoading ? "Loading…" : (niftipayNetworks.length ? "Select network" : "No networks available")}</option>
+                    )}
+                    {niftipayNetworks.map((n) => (
+                      <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
+                        {n.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
 
@@ -674,7 +687,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Checkout error</AlertDialogTitle>
           </AlertDialogHeader>
-        <div className="text-sm text-muted-foreground">{error}</div>
+          <div className="text-sm text-muted-foreground">{error}</div>
           <AlertDialogFooter>
             <AlertDialogAction onClick={() => setError(null)}>OK</AlertDialogAction>
           </AlertDialogFooter>
