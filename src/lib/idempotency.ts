@@ -1,11 +1,15 @@
-// src/lib/http/with-idempotency.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 
 /**
- * Exec returns either {status, body} OR a NextResponse. We always return a NextResponse.
- * IMPORTANT: if a NextResponse is returned, we CLONE it before reading for persistence,
- * to avoid locking/consuming the stream ("ReadableStream is locked").
+ * Exec returns either {status, body} OR a NextResponse.
+ * We always return a NextResponse.
+ *
+ * IMPORTANT:
+ * - Do NOT use response.clone() here. Tee-ing streams can make the original
+ *   body "locked" for Next's response piping.
+ * - Instead, read the *original* body once (text), persist a JSON/object form,
+ *   then return a brand-new NextResponse with the same body and headers.
  */
 export async function withIdempotency(
   req: NextRequest,
@@ -25,8 +29,7 @@ export async function withIdempotency(
     await c.query("BEGIN");
     try {
       await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt")
-         VALUES ($1,$2,$3,NOW())`,
+        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
         [key, method, path]
       );
     } catch (e: any) {
@@ -40,7 +43,6 @@ export async function withIdempotency(
         return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
       }
       if (e?.code === "42P01") {
-        // table missing in some envs → best-effort passthrough
         await c.query("ROLLBACK");
         const r = await exec();
         return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
@@ -48,40 +50,57 @@ export async function withIdempotency(
       throw e;
     }
 
-    const r = await exec();
+    const result = await exec();
 
-    // Decide what to persist WITHOUT consuming the original stream
-    const status = r instanceof NextResponse ? r.status : r.status;
-    let storedBody: any = null;
+    // Case 1: The route returned a NextResponse (streaming or not).
+    if (result instanceof NextResponse) {
+      const status = result.status;
+      // Copy headers BEFORE consuming body.
+      const headers = new Headers(result.headers);
 
-    if (r instanceof NextResponse) {
+      // Consume body once and persist safely.
+      let bodyText = "";
+      let storedBody: any = null;
       try {
-        const clone = r.clone(); // safe copy
-        const ct = (clone.headers.get("content-type") || "").toLowerCase();
+        bodyText = await result.text(); // consume original body
+        const ct = (headers.get("content-type") || "").toLowerCase();
         if (ct.includes("application/json")) {
-          storedBody = await clone.json().catch(() => null);
+          try { storedBody = JSON.parse(bodyText); } catch { storedBody = null; }
         } else {
-          const text = await clone.text().catch(() => "");
-          // avoid giant rows
-          storedBody = { text: text.slice(0, 4096) };
+          storedBody = { text: bodyText.slice(0, 4096) };
         }
       } catch {
         storedBody = null;
       }
-    } else {
-      storedBody = r.body ?? null;
+
+      await c.query(
+        `UPDATE idempotency
+           SET status=$2, response=$3, "updatedAt"=NOW()
+         WHERE key=$1`,
+        [key, status, storedBody]
+      );
+
+      await c.query("COMMIT");
+
+      // Re-emit a fresh response with the same body & headers.
+      // Remove content-length to let Next recalc it for our new body.
+      headers.delete("content-length");
+      return new NextResponse(bodyText, { status, headers });
     }
+
+    // Case 2: Plain object form {status, body}
+    const status = result.status;
+    const persisted = result.body ?? null;
 
     await c.query(
       `UPDATE idempotency
          SET status=$2, response=$3, "updatedAt"=NOW()
        WHERE key=$1`,
-      [key, status, storedBody]
+      [key, status, persisted]
     );
     await c.query("COMMIT");
 
-    // Return the original response untouched
-    return r instanceof NextResponse ? r : NextResponse.json(r.body, { status });
+    return NextResponse.json(persisted, { status });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -90,5 +109,4 @@ export async function withIdempotency(
   }
 }
 
-// Provide a default export too, so you can import whichever way you prefer.
 export default withIdempotency;
