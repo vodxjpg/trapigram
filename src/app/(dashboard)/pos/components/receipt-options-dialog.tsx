@@ -1,4 +1,3 @@
-// src/app/(dashboard)/pos/components/receipt-options-dialog.tsx
 "use client";
 
 import * as React from "react";
@@ -14,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -122,13 +122,21 @@ export default function ReceiptOptionsDialog({
   const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
 
-  // ─────────────────────────────────────────────────────────────
+  // While we ensure/get QR, hide the form and show skeleton
+  const [qrPending, setQrPending] = useState(false);
+
+  // Local skeletons
+  const SkeletonBlock = ({ className = "" }: { className?: string }) => (
+    <div className={cn("animate-pulse rounded-md bg-muted/40", className)} />
+  );
+
   // 1) Fetch order (plural → singular fallback)
   useEffect(() => {
     let ignore = false;
     if (!open || !orderId) {
       setRaw(null);
       setOrder(null);
+      setQrPending(false);
       return;
     }
     (async () => {
@@ -184,7 +192,6 @@ export default function ReceiptOptionsDialog({
     })();
   }, [open]);
 
-  // ─────────────────────────────────────────────────────────────
   // 3) Ensure a Niftipay invoice exists (browser → our proxy → Niftipay)
   useEffect(() => {
     if (!open || !order) return;
@@ -218,12 +225,17 @@ export default function ReceiptOptionsDialog({
           .filter(Boolean) as { name: string | null; amount: number }[];
 
         const niftiSplits = splits.filter((s) => looksNiftipayName(s.name));
-        if (!niftiSplits.length) return; // nothing to do in this receipt
+        const needsNifti = niftiSplits.length > 0;
+
+        // Start pending if we expect a Niftipay QR for this receipt
+        setQrPending(needsNifti);
+
+        if (!needsNifti) return; // nothing to do in this receipt
 
         const niftiAmount = +niftiSplits.reduce((s, p) => s + p.amount, 0).toFixed(2);
-        if (!(niftiAmount > 0)) return;
+        if (!(niftiAmount > 0)) { setQrPending(false); return; }
 
-        // If orderMeta already has a valid QR/address for this amount, reuse it and stop.
+        // If orderMeta already has a valid QR/address for this amount, reuse it
         const metaArray: any[] = Array.isArray(order?.orderMeta)
           ? order!.orderMeta
           : Array.isArray(raw?.orderMeta)
@@ -240,7 +252,7 @@ export default function ReceiptOptionsDialog({
           const qr = node.qr ?? node.qrUrl ?? node.qrImageUrl ?? node.qrCodeUrl ?? null;
           return Number.isFinite(amount) && Math.abs(amount - niftiAmount) < 0.0001 && (address || qr);
         });
-        if (metaHasInvoice) return;
+        if (metaHasInvoice) { setQrPending(false); return; }
 
         // 3a) Try find existing invoice by reference via our proxy
         const ref = order.orderKey ?? order.id;
@@ -254,11 +266,12 @@ export default function ReceiptOptionsDialog({
           const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
           const existing = found.find((o: any) => o.reference === ref && o.status !== "cancelled");
           if (existing) {
-            // Attach to local state so the QR renders (no need to persist for this flow)
+            // Attach to local state so the QR renders
             setOrder((prev: any) => ({
               ...prev,
               orderMeta: [...(Array.isArray(prev?.orderMeta) ? prev.orderMeta : []), existing],
             }));
+            setQrPending(false);
             return;
           }
         }
@@ -279,6 +292,7 @@ export default function ReceiptOptionsDialog({
 
         if (!chain || !asset) {
           if (!niftipayLoading) toast.error("No Niftipay networks available");
+          setQrPending(false);
           return;
         }
 
@@ -293,8 +307,8 @@ export default function ReceiptOptionsDialog({
             asset,
             amount: niftiAmount,
             currency,
-            firstName,                 // ← now sending names
-            lastName,                  // ← now sending names
+            firstName,
+            lastName,
             email: orderEmail || "user@trapyfy.com",
             merchantId: order.organizationId ?? undefined,
             reference: ref,
@@ -304,6 +318,7 @@ export default function ReceiptOptionsDialog({
         if (!niftipayRes.ok) {
           const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
           toast.error(errorBody?.error || "Failed to create Niftipay invoice");
+          setQrPending(false);
           return;
         }
 
@@ -315,13 +330,13 @@ export default function ReceiptOptionsDialog({
         }));
       } catch (e: any) {
         toast.error(e?.message || "Niftipay invoice create/fetch failed");
+      } finally {
+        setQrPending(false);
       }
     })();
   }, [open, order, raw, niftipayNetworks, niftipayLoading]);
 
-  /* ─────────────────────────────────────────────────────────────
-   * Build blocks from whatever meta we now have
-   * ──────────────────────────────────────────────────────────── */
+  /* Build blocks from whatever meta we now have */
   const niftiBlocks = useMemo(() => {
     if (!raw && !order) return [] as Array<NiftiView & { idx: number }>;
 
@@ -404,9 +419,7 @@ export default function ReceiptOptionsDialog({
     return metas.map((m, i) => ({ ...m, idx: i }));
   }, [raw, order]);
 
-  /* ─────────────────────────────────────────────────────────────
-   * Print / Email actions
-   * ──────────────────────────────────────────────────────────── */
+  /* Print / Email actions */
   const doPrint = async () => {
     try {
       if (!orderId) return;
@@ -452,6 +465,9 @@ export default function ReceiptOptionsDialog({
     }
   };
 
+  // Whether we should hide the form until QR is available
+  const shouldHoldForQR = qrPending && niftiBlocks.length === 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -460,69 +476,98 @@ export default function ReceiptOptionsDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Niftipay QR/address blocks (from ensured invoice) */}
-          {niftiBlocks.length > 0 && (
+          {/* If QR is expected but not ready → skeleton, no form */}
+          {shouldHoldForQR ? (
             <div className="space-y-3">
-              {niftiBlocks.map((b) => (
-                <Card key={`nifti-${b.idx}`} className="p-3 space-y-2">
-                  <div className="text-sm font-medium">
-                    {b.asset ? `${b.asset}` : "Crypto"}
-                    {b.chain ? ` on ${b.chain}` : ""} — {b.amount}
+              <Card className="p-3">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Preparing crypto payment…</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-1 flex items-center justify-center">
+                      <div className="h-40 w-40">
+                        <div className="animate-pulse h-full w-full rounded-md bg-muted/40" />
+                      </div>
+                    </div>
+                    <div className="col-span-2 space-y-2">
+                      <SkeletonBlock className="h-5 w-32" />
+                      <SkeletonBlock className="h-5 w-48" />
+                      <SkeletonBlock className="h-5 w-full" />
+                      <SkeletonBlock className="h-5 w-3/4" />
+                    </div>
                   </div>
-
-                  {b.qr && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={b.qr}
-                      alt="Payment QR"
-                      className="mx-auto h-40 w-40 object-contain"
-                    />
-                  )}
-
-                  {b.address && (
-                    <div className="text-xs break-all rounded bg-muted p-2 font-mono">
-                      {b.address}
-                    </div>
-                  )}
-
-                  {b.address && (
-                    <div className="flex justify-end">
-                      <Button variant="outline" size="sm" onClick={() => copy(b.address!)}>
-                        Copy address
-                      </Button>
-                    </div>
-                  )}
-                </Card>
-              ))}
+                </div>
+              </Card>
+              <div className="text-xs text-muted-foreground">
+                Generating wallet address & QR… this usually takes a moment.
+              </div>
             </div>
+          ) : (
+            <>
+              {/* Niftipay QR/address blocks (from ensured invoice) */}
+              {niftiBlocks.length > 0 && (
+                <div className="space-y-3">
+                  {niftiBlocks.map((b) => (
+                    <Card key={`nifti-${b.idx}`} className="p-3 space-y-2">
+                      <div className="text-sm font-medium">
+                        {b.asset ? `${b.asset}` : "Crypto"}
+                        {b.chain ? ` on ${b.chain}` : ""} — {b.amount}
+                      </div>
+
+                      {b.qr && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={b.qr}
+                          alt="Payment QR"
+                          className="mx-auto h-40 w-40 object-contain"
+                        />
+                      )}
+
+                      {b.address && (
+                        <div className="text-xs break-all rounded bg-muted p-2 font-mono">
+                          {b.address}
+                        </div>
+                      )}
+
+                      {b.address && (
+                        <div className="flex justify-end">
+                          <Button variant="outline" size="sm" onClick={() => copy(b.address!)}>
+                            Copy address
+                          </Button>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* Email field */}
+              <div className="space-y-2">
+                <Label htmlFor="receipt-email">Email (optional)</Label>
+                <Input
+                  id="receipt-email"
+                  placeholder="customer@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  We’ll email a link to the receipt PDF. Leave blank to skip email.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" onClick={doPrint} disabled={!orderId}>
+                  Print
+                </Button>
+                <Button onClick={sendEmail} disabled={!orderId || !email || sending}>
+                  {sending ? "Sending…" : "Email"}
+                </Button>
+                <Button variant="ghost" onClick={close}>
+                  Skip
+                </Button>
+              </div>
+            </>
           )}
-
-          {/* Email field */}
-          <div className="space-y-2">
-            <Label htmlFor="receipt-email">Email (optional)</Label>
-            <Input
-              id="receipt-email"
-              placeholder="customer@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              We’ll email a link to the receipt PDF. Leave blank to skip email.
-            </p>
-          </div>
-
-          {/* Actions */}
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant="outline" onClick={doPrint} disabled={!orderId}>
-              Print
-            </Button>
-            <Button onClick={sendEmail} disabled={!orderId || !email || sending}>
-              {sending ? "Sending…" : "Email"}
-            </Button>
-            <Button variant="ghost" onClick={close}>
-              Skip
-            </Button>
-          </div>
         </div>
       </DialogContent>
     </Dialog>

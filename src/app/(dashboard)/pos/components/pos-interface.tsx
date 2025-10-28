@@ -86,10 +86,10 @@ export function POSInterface() {
 
   // track which product tiles are currently showing a quick spinner
   const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set())
-  // NEW: keep tiles disabled until the network finishes to prevent re-click spam
+  // keep tiles disabled until the network finishes to prevent re-click spam
   const [disabledKeys, setDisabledKeys] = useState<Set<string>>(new Set())
 
-  // NEW: per-line pending actions in cart (disables +/−/remove)
+  // per-line pending actions in cart (disables +/−/remove)
   const [pendingLineKeys, setPendingLineKeys] = useState<Set<string>>(new Set())
 
   // mobile cart drawer
@@ -190,7 +190,7 @@ export function POSInterface() {
   // require store→outlet selection
   const forceSelectDialog = !storeId || !outletId
 
-  // When outlet changes, just persist the choice and clear any cached cart id
+  // When outlet changes, persist choice and clear any cached cart id
   useEffect(() => {
     if (!outletId) {
       setCartId(null)
@@ -210,7 +210,6 @@ export function POSInterface() {
     const openFreshCartIfNeeded = async () => {
       if (!storeId || !outletId || !selectedCustomer?.id) return
       try {
-        // Always request a clean cart for Walk-in on outlet open.
         const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
         const body = {
           clientId: selectedCustomer.id,
@@ -440,7 +439,6 @@ export function POSInterface() {
         country: resolveCartCountry(),
         storeId,
         registerId: outletId,
-        // no reset here; this is used during "add to cart"
       }
       const res = await fetch("/api/pos/cart", {
         method: "POST",
@@ -542,7 +540,7 @@ export function POSInterface() {
 
   /** ---------- Actions (now optimistic) ---------- */
 
-  const TILE_SPINNER_MS = 250 // short visual feedback
+  const TILE_SPINNER_MS = 300 // quick visual feedback per your request
   const addToCart = async (p: GridProduct) => {
     try {
       if (!selectedCustomer?.id) {

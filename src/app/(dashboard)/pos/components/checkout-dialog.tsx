@@ -1,4 +1,3 @@
-// src/app/(dashboard)/pos/components/checkout-dialog.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -164,7 +163,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
           }))
           .filter((m) => m.id);
 
-        // NEW: effectiveSubtotal
+        // effectiveSubtotal
         const eff = Number(j?.effectiveSubtotal);
         setEffectiveSubtotal(Number.isFinite(eff) ? eff : null);
 
@@ -393,6 +392,14 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   const selectedMethod = paymentMethods.find((pm) => pm.id === currentMethodId) || null;
 
+  // UI gating while methods load
+  const inputsDisabled = !methodsLoaded || noPosMethods;
+
+  // Local skeletons (no external deps)
+  const SkeletonBlock = ({ className = "" }: { className?: string }) => (
+    <div className={cn("animate-pulse rounded-md bg-muted/40", className)} />
+  );
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -430,11 +437,18 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               )}
             </div>
 
-            {/* Payment methods (or empty state) */}
+            {/* Payment methods (skeleton → grid) */}
             <div className="space-y-2">
               <Label>Payment Method</Label>
 
-              {noPosMethods ? (
+              {!methodsLoaded ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <SkeletonBlock className="h-20" />
+                  <SkeletonBlock className="h-20" />
+                  <SkeletonBlock className="h-20" />
+                  <SkeletonBlock className="h-20" />
+                </div>
+              ) : noPosMethods ? (
                 <div className="rounded-md border p-4 bg-muted/30">
                   <p className="text-sm">
                     You don’t have any <strong>POS payment methods</strong> enabled. Create one to accept payments here.
@@ -473,29 +487,33 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
             </div>
 
             {/* Niftipay network picker */}
-            {!noPosMethods && currentMethodIsNiftipay && (
+            {methodsLoaded && !noPosMethods && currentMethodIsNiftipay && (
               <div className="space-y-2">
                 <Label>Crypto Network</Label>
-                <div>
-                  <select
-                    className="w-full border rounded-md px-3 h-10 bg-background"
-                    value={selectedNiftipay}
-                    onChange={(e) => setSelectedNiftipay(e.target.value)}
-                    disabled={niftipayLoading || niftipayNetworks.length === 0}
-                  >
-                    {!selectedNiftipay && <option value="">{niftipayLoading ? "Loading…" : "Select network"}</option>}
-                    {niftipayNetworks.map((n) => (
-                      <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
-                        {n.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {niftipayLoading ? (
+                  <SkeletonBlock className="h-10" />
+                ) : (
+                  <div>
+                    <select
+                      className="w-full border rounded-md px-3 h-10 bg-background"
+                      value={selectedNiftipay}
+                      onChange={(e) => setSelectedNiftipay(e.target.value)}
+                      disabled={niftipayNetworks.length === 0}
+                    >
+                      {!selectedNiftipay && <option value="">{niftipayNetworks.length ? "Select network" : "No networks available"}</option>}
+                      {niftipayNetworks.map((n) => (
+                        <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
+                          {n.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Amount + helpers */}
-            {!noPosMethods && remaining > 0 && (
+            {methodsLoaded && !noPosMethods && remaining > 0 && (
               <>
                 <div className="space-y-2">
                   <Label>Amount</Label>
@@ -507,12 +525,13 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                     value={currentAmount}
                     onChange={(e) => setCurrentAmount(e.target.value)}
                     placeholder="0.00"
+                    disabled={inputsDisabled}
                   />
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)}>25%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)}>50%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)}>75%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)}>Full</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)} disabled={inputsDisabled}>25%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)} disabled={inputsDisabled}>50%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)} disabled={inputsDisabled}>75%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)} disabled={inputsDisabled}>Full</Button>
                   </div>
                 </div>
 
@@ -526,6 +545,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                       value={cashReceived}
                       onChange={(e) => setCashReceived(e.target.value)}
                       placeholder={currentAmount || "0.00"}
+                      disabled={inputsDisabled}
                     />
                     {change > 0 && (
                       <p className="text-sm">
@@ -540,6 +560,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                   className="w-full"
                   onClick={handleAddPayment}
                   disabled={
+                    inputsDisabled ||
                     !currentAmount ||
                     !currentMethodId ||
                     Number.parseFloat(currentAmount) <= 0 ||
@@ -585,15 +606,11 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
             )}
 
             {/* Current method instructions (if any) */}
-            {!!selectedMethod?.instructions && !noPosMethods && (
+            {!!selectedMethod?.instructions && methodsLoaded && !noPosMethods && (
               <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
                 <div className="flex items-start gap-2">
                   <Info className="mt-0.5 h-4 w-4" />
-                  <div
-                    // assuming server-provided text, keep it plain (not dangerouslySetInnerHTML)
-                  >
-                    {selectedMethod.instructions}
-                  </div>
+                  <div>{selectedMethod.instructions}</div>
                 </div>
               </div>
             )}
@@ -657,7 +674,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Checkout error</AlertDialogTitle>
           </AlertDialogHeader>
-          <div className="text-sm text-muted-foreground">{error}</div>
+        <div className="text-sm text-muted-foreground">{error}</div>
           <AlertDialogFooter>
             <AlertDialogAction onClick={() => setError(null)}>OK</AlertDialogAction>
           </AlertDialogFooter>
