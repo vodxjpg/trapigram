@@ -13,9 +13,11 @@ export async function GET(req: NextRequest) {
     SELECT c."userId", c.username, c."firstName", c."lastName",
            COALESCE(b."pointsCurrent",0) + COALESCE(b."pointsSpent",0) AS total
       FROM clients c
- LEFT JOIN "affiliatePointBalances" b ON b."clientId" = c.id
+ LEFT JOIN "affiliatePointBalances" b
+        ON b."clientId" = c.id
+       AND b."organizationId" = c."organizationId"
      WHERE c."organizationId" = $1
-  ORDER BY total DESC NULLS LAST
+  ORDER BY total DESC NULLS LAST, c.username NULLS LAST, c."userId" ASC
      LIMIT $2
   `;
   try {
