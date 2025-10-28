@@ -21,7 +21,7 @@ const CreateSchema = z.object({
   country: z.string().length(2).optional(),
   storeId: z.string().optional(),     // used to compose channel
   registerId: z.string().optional(),  // used to compose channel
-  /** NEW: if true, and we detect Walk-in, we close any existing POS cart for this outlet and create a fresh cart */
+  /** If true and client is Walk-in, close any existing POS cart for this outlet and create a fresh cart */
   resetIfWalkIn: z.boolean().optional(),
 });
 
@@ -53,8 +53,8 @@ export async function POST(req: NextRequest) {
           [clientId, organizationId]
         );
         if (!rows.length) return false;
-        const r = rows[0];
-        return r.fn === "walk-in" || r.un LIKE 'walkin-%';
+        const r = rows[0] as { fn: string; un: string };
+        return r.fn === "walk-in" || (r.un?.startsWith("walkin-") ?? false);
       };
 
       /* 1) Resolve non-null desired country (payload → org settings → 'US') */
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
           [organizationId]
         );
         if (org.length) {
-          const row = org[0];
+          const row = org[0] as any;
           let first: string | null = null;
 
           if (Array.isArray(row.countries) && row.countries.length) first = row.countries[0];
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
             }
           );
         }
-        clientId = rows[0].id;
+        clientId = (rows[0] as any).id;
       }
       mark("client_resolve");
 
@@ -142,10 +142,10 @@ export async function POST(req: NextRequest) {
         );
 
         if (exact.length) {
-          const cart = exact[0];
+          const cart = exact[0] as any;
 
           // If asked to reset and this is Walk-in, close old & create fresh
-          if (resetIfWalkIn && (await isWalkIn(clientId))) {
+          if (resetIfWalkIn && (await isWalkIn(clientId!))) {
             await pool.query(`UPDATE carts SET status=false, "updatedAt"=NOW() WHERE id=$1`, [cart.id]);
             mark("close_old_cart");
             // fall through to creation path below (section 6)
@@ -183,9 +183,9 @@ export async function POST(req: NextRequest) {
       );
 
       if (anyPos.length) {
-        const cart = anyPos[0];
+        const cart = anyPos[0] as any;
 
-        if (resetIfWalkIn && (await isWalkIn(clientId))) {
+        if (resetIfWalkIn && (await isWalkIn(clientId!))) {
           await pool.query(`UPDATE carts SET status=false, "updatedAt"=NOW() WHERE id=$1`, [cart.id]);
           mark("close_old_cart");
           // fall through to creation path below
