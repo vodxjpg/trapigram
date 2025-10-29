@@ -36,10 +36,10 @@ const LS_KEYS = {
   CLIENT: "pos.clientId",
 }
 
-// Slightly longer to coalesce spam without feeling laggy
-const BATCH_MS = 200
-// After bursts, fetch one authoritative snapshot
-const RECONCILE_MS = 350
+// Coalesce bursts without adding perceived latency
+const BATCH_MS = 140
+// One passive reconcile after bursts (kept, but now harmless with overlay)
+const RECONCILE_MS = 300
 
 function useDebounced<T>(value: T, ms = 250) {
   const [v, setV] = useState(value)
@@ -110,10 +110,13 @@ export function POSInterface() {
   const shouldApply = (seq: number) => seq > lastAppliedSeqRef.current
   const markApplied = (seq: number) => { if (seq > lastAppliedSeqRef.current) lastAppliedSeqRef.current = seq }
 
-  // ── Ghost lines to prevent flicker at qty 0 ───────────────────────
-  // When a line optimistically hits 0, keep a “ghost” until server confirms removal.
-  const ghostsRef = useRef<Map<string, CartLine>>(new Map())
+  // Key helpers
   const keyOf = (x: { productId: string; variationId: string | null }) => `${x.productId}:${x.variationId ?? "base"}`
+  const keyFromIds = (productId: string, variationId: string | null) => `${productId}:${variationId ?? "base"}`
+  const parseKey = (key: string): { productId: string; variationId: string | null } => {
+    const [pid, v] = key.split(":")
+    return { productId: pid, variationId: v === "base" ? null : v }
+  }
 
   // Reconcile debounce timer
   const reconcileTimer = useRef<number | null>(null)
@@ -208,7 +211,6 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
-    ghostsRef.current.clear()
   }, [selectedCustomer?.id])
 
   // require store→outlet selection
@@ -219,7 +221,6 @@ export function POSInterface() {
     if (!outletId) {
       setCartId(null)
       setLines([])
-      ghostsRef.current.clear()
       return
     }
     if (typeof window !== "undefined") {
@@ -228,7 +229,6 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
-    ghostsRef.current.clear()
   }, [outletId])
 
   // After outlet + store + customer are known → open a clean cart for Walk-in
@@ -257,7 +257,6 @@ export function POSInterface() {
         if (!newCartId) throw new Error("No cart id returned")
         setCartId(newCartId)
         setLines([]) // start clean
-        ghostsRef.current.clear()
         if (typeof window !== "undefined") {
           localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
         }
@@ -489,34 +488,91 @@ export function POSInterface() {
     }
   }
 
-  // Merge server lines with any active ghosts (prevents flicker)
-  const applyServerCart = useCallback((serverList: any[], seq: number) => {
-    if (!shouldApply(seq)) return
+  /* ────────────────────────────────────────────────────────────────
+     OUTSTANDING OVERLAY: never render less than (server + queued)
+     We track pending + in-flight per key for both “tile adds” and “line +/-”.
+  ───────────────────────────────────────────────────────────────── */
 
+  // Tile adds queue
+  type PendingAdd = { pending: number; inflightQty: number; inflight: boolean; flushTimer: number | null }
+  const addQueueRef = useRef<Map<string, PendingAdd>>(new Map())
+
+  // +/- queue
+  type LineDelta = { delta: number; inflightDelta: number; inflight: boolean; flushTimer: number | null }
+  const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
+
+  const outstandingForKey = (key: string) => {
+    const a = addQueueRef.current.get(key)
+    const l = lineQueueRef.current.get(key)
+    const addOut = (a?.pending ?? 0) + (a?.inflightQty ?? 0)
+    const lineOut = (l?.delta ?? 0) + (l?.inflightDelta ?? 0) // can be negative
+    return addOut + lineOut
+  }
+
+  const findMetaForKey = (key: string): { title: string; image: string | null; sku: string | null; unitPrice: number } => {
+    const prev = linesRef.current.find(l => keyOf(l) === key)
+    if (prev) {
+      return { title: prev.title, image: prev.image, sku: prev.sku, unitPrice: prev.unitPrice }
+    }
+    const { productId, variationId } = parseKey(key)
+    const p = products.find(x => x.productId === productId && x.variationId === variationId)
+    return {
+      title: p?.title ?? "Item",
+      image: p?.image ?? null,
+      sku: null,
+      unitPrice: Number(p?.priceForDisplay ?? 0),
+    }
+  }
+
+  // Merge server snapshot with outstanding client ops → render lines
+  const composeRenderLines = useCallback((serverList: any[]) => {
     const serverLines = mapServerLines(serverList)
-    const serverKeys = new Set(serverLines.map(x => keyOf(x)))
-
-    // Keep ghost lines only if their queue is still active (delta/inflight) — see lineQueueRef/addQueueRef
-    const merged: CartLine[] = [...serverLines]
-
-    // include ghosts still “active”
-    for (const [gkey, gline] of ghostsRef.current.entries()) {
-      const lq = lineQueueRef.current.get(gkey)
-      const aq = addQueueRef.current.get(gkey)
-      const active =
-        (lq && (lq.inflight || lq.delta !== 0)) ||
-        (aq && (aq.inflight || aq.pending > 0))
-      if (active && !serverKeys.has(gkey)) {
-        merged.push(gline)
-      } else if (!active && !serverKeys.has(gkey)) {
-        // server agrees it's gone and queue idle → drop ghost
-        ghostsRef.current.delete(gkey)
+    const result = new Map<string, CartLine>()
+    // 1) Start with all server lines, overlay outstanding
+    for (const sl of serverLines) {
+      const key = keyOf(sl)
+      const out = outstandingForKey(key)
+      const qty = Math.max(0, sl.quantity + out)
+      if (qty === 0) continue
+      const unit = Number(sl.unitPrice || 0)
+      result.set(key, {
+        ...sl,
+        quantity: qty,
+        subtotal: +(qty * unit).toFixed(2),
+      })
+    }
+    // 2) For keys absent on server but with positive outstanding → render virtual lines
+    const addKeys = Array.from(addQueueRef.current.keys())
+    const lineKeys = Array.from(lineQueueRef.current.keys())
+    const candidateKeys = new Set<string>([...addKeys, ...lineKeys])
+    for (const key of candidateKeys) {
+      if (result.has(key)) continue
+      const out = outstandingForKey(key)
+      if (out > 0) {
+        const meta = findMetaForKey(key)
+        const qty = out
+        const unit = Number(meta.unitPrice || 0)
+        result.set(key, {
+          productId: parseKey(key).productId,
+          variationId: parseKey(key).variationId,
+          title: meta.title,
+          image: meta.image,
+          sku: meta.sku,
+          quantity: qty,
+          unitPrice: unit,
+          subtotal: +(qty * unit).toFixed(2),
+        })
       }
     }
+    return Array.from(result.values())
+  }, [mapServerLines, products])
 
-    setLines(merged)
+  // Apply server cart (monotonic + overlay)
+  const applyServerCart = useCallback((serverList: any[], seq: number) => {
+    if (!shouldApply(seq)) return
+    setLines(composeRenderLines(serverList))
     markApplied(seq)
-  }, [mapServerLines])
+  }, [composeRenderLines])
 
   const refreshCart = async (cid: string, seqArg?: number) => {
     const seq = seqArg ?? ++cartSeqRef.current
@@ -531,18 +587,17 @@ export function POSInterface() {
     }
   }
 
-  /** ---------- Optimistic helpers ---------- */
+  /* ────────────────────────── Optimistic helpers (local state) ────────────────────────── */
 
   const upsertOptimistic = (p: GridProduct) => {
     setLines(prev => {
       const idx = prev.findIndex(l => l.productId === p.productId && (l.variationId ?? null) === (p.variationId ?? null))
       if (idx >= 0) {
-        const unitPrice = Number(prev[idx].unitPrice ?? p.priceForDisplay ?? 0)
+        const unitPrice = Number(prev[idx].unitPrice || p.priceForDisplay || 0)
         const quantity = prev[idx].quantity + 1
         const subtotal = +(quantity * unitPrice).toFixed(2)
-        const updated = { ...prev[idx], quantity, unitPrice, subtotal }
         const next = prev.slice()
-        next[idx] = updated
+        next[idx] = { ...prev[idx], quantity, subtotal, unitPrice }
         return next
       }
       const unitPrice = Number(p.priceForDisplay || 0)
@@ -569,50 +624,40 @@ export function POSInterface() {
       const subtotal = +(quantity * unitPrice).toFixed(2)
       const next = prev.slice()
       next[idx] = { ...prev[idx], quantity, subtotal }
-      // if it was a ghost (qty 0 before), un-ghost it
-      ghostsRef.current.delete(keyOf(line))
       return next
     })
   }
 
-  // IMPORTANT: do NOT remove line immediately at qty 0 → keep a ghost
   const optimisticDec = (line: CartLine) => {
     setLines(prev => {
       const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
       if (idx === -1) return prev
       const unitPrice = Number(prev[idx].unitPrice)
       const quantity = Math.max(0, prev[idx].quantity - 1)
+      const subtotal = +(quantity * unitPrice).toFixed(2)
       const next = prev.slice()
       if (quantity === 0) {
-        const ghost: CartLine = { ...prev[idx], quantity: 0, subtotal: 0 }
-        next[idx] = ghost
-        ghostsRef.current.set(keyOf(ghost), ghost)
+        // keep the row in place with qty 0; overlay will add pending when needed
+        next[idx] = { ...prev[idx], quantity, subtotal }
         return next
       }
-      const subtotal = +(quantity * unitPrice).toFixed(2)
       next[idx] = { ...prev[idx], quantity, subtotal }
       return next
     })
   }
 
-  const optimisticRemove = (line: CartLine) => {
-    // turn into a ghost instead of removing immediately
-    setLines(prev => {
-      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
-      if (idx === -1) return prev
-      const ghost: CartLine = { ...prev[idx], quantity: 0, subtotal: 0 }
-      const next = prev.slice()
-      next[idx] = ghost
-      ghostsRef.current.set(keyOf(ghost), ghost)
+  /* ────────────────────────── Micro-batched queues ────────────────────────── */
+
+  const setPendingKey = (key: string, on: boolean) => {
+    setPendingLineKeys(prev => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
       return next
     })
   }
 
-  /** ---------- Micro-batched queues ---------- */
-
-  type PendingAdd = { pending: number; inflight: boolean; flushTimer: number | null }
-  const addQueueRef = useRef<Map<string, PendingAdd>>(new Map())
-
+  // ADD (from product tiles)
   const scheduleAddFlush = (key: string, product: GridProduct) => {
     const entry = addQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
@@ -629,13 +674,14 @@ export function POSInterface() {
     entry.inflight = true
     const qty = entry.pending
     entry.pending = 0
+    entry.inflightQty = qty
     const seq = ++cartSeqRef.current
 
     try {
       const clientId = selectedCustomer?.id
-      if (!clientId) { setError("Pick or create a customer first (Walk-in is fine)."); entry.inflight = false; return }
+      if (!clientId) { setError("Pick or create a customer first (Walk-in is fine)."); entry.inflight = false; entry.inflightQty = 0; return }
       const cid = (await ensureCart(clientId)) || cartId
-      if (!cid) { entry.inflight = false; return }
+      if (!cid) { entry.inflight = false; entry.inflightQty = 0; return }
 
       const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
 
@@ -670,6 +716,7 @@ export function POSInterface() {
           if (!res2.ok) {
             const errPayload = await res2.json().catch(() => ({}))
             setError(errPayload?.error || "Failed to add to cart")
+            entry.inflightQty = 0 // drop outstanding, we’ll refresh next
             await refreshCart(cid, seq)
             break
           }
@@ -678,13 +725,15 @@ export function POSInterface() {
         }
       }
 
+      // IMPORTANT: reduce outstanding *before* composing to avoid double-count
+      entry.inflightQty = 0
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid!, seq)
 
-      // post-burst reconcile
       scheduleReconcile(cid!)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
+      entry.inflightQty = 0
       if (cartId) await refreshCart(cartId, seq)
     } finally {
       entry.inflight = false
@@ -692,18 +741,7 @@ export function POSInterface() {
     }
   }
 
-  type LineDelta = { delta: number; inflight: boolean; flushTimer: number | null }
-  const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
-
-  const setPendingKey = (key: string, on: boolean) => {
-    setPendingLineKeys(prev => {
-      const next = new Set(prev)
-      if (on) next.add(key)
-      else next.delete(key)
-      return next
-    })
-  }
-
+  // +/- (from cart lines)
   const scheduleLineFlush = (key: string, payload: { productId: string; variationId: string | null }) => {
     const entry = lineQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
@@ -718,22 +756,22 @@ export function POSInterface() {
     if (!entry || entry.inflight || entry.delta === 0) return
 
     entry.inflight = true
-    const deltaNow = entry.delta
+    const sent = entry.delta
     entry.delta = 0
+    entry.inflightDelta += sent
     const seq = ++cartSeqRef.current
     setPendingKey(key, true)
 
     try {
       const cid = cartId
-      if (!cid) { entry.inflight = false; setPendingKey(key, false); return }
+      if (!cid) { entry.inflight = false; entry.inflightDelta -= sent; setPendingKey(key, false); return }
 
-      const qtyAbs = Math.abs(deltaNow)
-      const action = deltaNow > 0 ? "add" : "subtract"
+      const qtyAbs = Math.abs(sent)
+      const action = sent > 0 ? "add" : "subtract"
 
       let ok = false
       let linesPayload: any[] | null = null
 
-      // Coalesced PATCH with "quantity"
       try {
         const res = await fetch(`/api/pos/cart/${cid}/update-product`, {
           method: "PATCH",
@@ -750,7 +788,6 @@ export function POSInterface() {
         if (ok && Array.isArray(j.lines)) linesPayload = j.lines
       } catch { ok = false }
 
-      // Fallback to repeated single-step calls
       if (!ok) {
         for (let i = 0; i < qtyAbs; i++) {
           const res2 = await fetch(`/api/pos/cart/${cid}/update-product`, {
@@ -765,6 +802,7 @@ export function POSInterface() {
           if (!res2.ok) {
             const j2e = await res2.json().catch(() => ({}))
             setError(j2e?.error || "Failed to update quantity")
+            entry.inflightDelta -= sent
             await refreshCart(cid, seq)
             break
           }
@@ -773,13 +811,15 @@ export function POSInterface() {
         }
       }
 
+      // Reduce outstanding *before* composing to avoid double-count
+      entry.inflightDelta -= sent
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid, seq)
 
-      // post-burst reconcile
       scheduleReconcile(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to update quantity")
+      entry.inflightDelta -= sent
       if (cartId) await refreshCart(cartId, seq)
     } finally {
       entry.inflight = false
@@ -793,7 +833,7 @@ export function POSInterface() {
 
   /** ---------- Actions ---------- */
 
-  const TILE_SPINNER_MS = 120 // just a tiny visual ping
+  const TILE_SPINNER_MS = 120 // small visual ping
   const addToCart = async (p: GridProduct) => {
     // instant optimistic
     upsertOptimistic(p)
@@ -811,35 +851,37 @@ export function POSInterface() {
 
     // enqueue micro-batched network call
     const map = addQueueRef.current
-    const entry = map.get(key) ?? { pending: 0, inflight: false, flushTimer: null }
+    const entry = map.get(key) ?? { pending: 0, inflightQty: 0, inflight: false, flushTimer: null }
     entry.pending += 1
     map.set(key, entry)
     scheduleAddFlush(key, p)
   }
 
+  // spam-safe +
   const inc = async (line: CartLine) => {
     if (!cartId) return
     optimisticInc(line)
     const key = lineKeyOf(line)
     const map = lineQueueRef.current
-    const entry = map.get(key) ?? { delta: 0, inflight: false, flushTimer: null }
+    const entry = map.get(key) ?? { delta: 0, inflightDelta: 0, inflight: false, flushTimer: null }
     entry.delta += 1
     map.set(key, entry)
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
+  // spam-safe −
   const dec = async (line: CartLine) => {
     if (!cartId) return
     optimisticDec(line)
     const key = lineKeyOf(line)
     const map = lineQueueRef.current
-    const entry = map.get(key) ?? { delta: 0, inflight: false, flushTimer: null }
+    const entry = map.get(key) ?? { delta: 0, inflightDelta: 0, inflight: false, flushTimer: null }
     entry.delta -= 1
     map.set(key, entry)
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
-  // Remove → ghost then server confirm
+  // Remove → keep row but qty will go to 0; overlay will converge on server
   const withLinePending = async (line: CartLine, fn: () => Promise<void>) => {
     const key = lineKeyOf(line)
     if (pendingLineKeys.has(key)) return
@@ -853,7 +895,8 @@ export function POSInterface() {
 
   const removeLine = async (line: CartLine) => {
     if (!cartId) return
-    optimisticRemove(line)
+    optimisticDec({ ...line, quantity: 1, subtotal: line.unitPrice }) // quick visual drop by 1
+    // then push a hard delete (server wins)
     await withLinePending(line, async () => {
       const seq = ++cartSeqRef.current
       try {
@@ -883,7 +926,6 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
-    ghostsRef.current.clear()
 
     if (!parked) {
       setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
