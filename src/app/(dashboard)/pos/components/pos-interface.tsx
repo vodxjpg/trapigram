@@ -36,8 +36,10 @@ const LS_KEYS = {
   CLIENT: "pos.clientId",
 }
 
-// NEW: small batch delay to coalesce spammy clicks safely
-const BATCH_MS = 120
+// Slightly longer to coalesce spam without feeling laggy
+const BATCH_MS = 200
+// After bursts, fetch one authoritative snapshot
+const RECONCILE_MS = 350
 
 function useDebounced<T>(value: T, ms = 250) {
   const [v, setV] = useState(value)
@@ -102,11 +104,26 @@ export function POSInterface() {
   // post-checkout receipt dialog
   const [receiptDlg, setReceiptDlg] = useState<{ orderId: string; email: string | null } | null>(null)
 
-  // ── NEW: stale-response guard (cart-wide monotonic seq) ───────────
+  // ── Stale-response guard (strictly monotonic) ─────────────────────
   const cartSeqRef = useRef(0)
   const lastAppliedSeqRef = useRef(0)
-  const shouldApply = (seq: number) => seq >= lastAppliedSeqRef.current
+  const shouldApply = (seq: number) => seq > lastAppliedSeqRef.current
   const markApplied = (seq: number) => { if (seq > lastAppliedSeqRef.current) lastAppliedSeqRef.current = seq }
+
+  // ── Ghost lines to prevent flicker at qty 0 ───────────────────────
+  // When a line optimistically hits 0, keep a “ghost” until server confirms removal.
+  const ghostsRef = useRef<Map<string, CartLine>>(new Map())
+  const keyOf = (x: { productId: string; variationId: string | null }) => `${x.productId}:${x.variationId ?? "base"}`
+
+  // Reconcile debounce timer
+  const reconcileTimer = useRef<number | null>(null)
+  const scheduleReconcile = (cid: string) => {
+    if (reconcileTimer.current != null) return
+    reconcileTimer.current = window.setTimeout(() => {
+      reconcileTimer.current = null
+      void refreshCart(cid, ++cartSeqRef.current)
+    }, RECONCILE_MS)
+  }
 
   // restore persisted choices
   useEffect(() => {
@@ -191,6 +208,7 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
+    ghostsRef.current.clear()
   }, [selectedCustomer?.id])
 
   // require store→outlet selection
@@ -201,6 +219,7 @@ export function POSInterface() {
     if (!outletId) {
       setCartId(null)
       setLines([])
+      ghostsRef.current.clear()
       return
     }
     if (typeof window !== "undefined") {
@@ -209,6 +228,7 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
+    ghostsRef.current.clear()
   }, [outletId])
 
   // After outlet + store + customer are known → open a clean cart for Walk-in
@@ -237,6 +257,7 @@ export function POSInterface() {
         if (!newCartId) throw new Error("No cart id returned")
         setCartId(newCartId)
         setLines([]) // start clean
+        ghostsRef.current.clear()
         if (typeof window !== "undefined") {
           localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
         }
@@ -468,9 +489,32 @@ export function POSInterface() {
     }
   }
 
-  const applyServerCart = useCallback((list: any[], seq: number) => {
+  // Merge server lines with any active ghosts (prevents flicker)
+  const applyServerCart = useCallback((serverList: any[], seq: number) => {
     if (!shouldApply(seq)) return
-    setLines(mapServerLines(list))
+
+    const serverLines = mapServerLines(serverList)
+    const serverKeys = new Set(serverLines.map(x => keyOf(x)))
+
+    // Keep ghost lines only if their queue is still active (delta/inflight) — see lineQueueRef/addQueueRef
+    const merged: CartLine[] = [...serverLines]
+
+    // include ghosts still “active”
+    for (const [gkey, gline] of ghostsRef.current.entries()) {
+      const lq = lineQueueRef.current.get(gkey)
+      const aq = addQueueRef.current.get(gkey)
+      const active =
+        (lq && (lq.inflight || lq.delta !== 0)) ||
+        (aq && (aq.inflight || aq.pending > 0))
+      if (active && !serverKeys.has(gkey)) {
+        merged.push(gline)
+      } else if (!active && !serverKeys.has(gkey)) {
+        // server agrees it's gone and queue idle → drop ghost
+        ghostsRef.current.delete(gkey)
+      }
+    }
+
+    setLines(merged)
     markApplied(seq)
   }, [mapServerLines])
 
@@ -525,33 +569,46 @@ export function POSInterface() {
       const subtotal = +(quantity * unitPrice).toFixed(2)
       const next = prev.slice()
       next[idx] = { ...prev[idx], quantity, subtotal }
+      // if it was a ghost (qty 0 before), un-ghost it
+      ghostsRef.current.delete(keyOf(line))
       return next
     })
   }
 
+  // IMPORTANT: do NOT remove line immediately at qty 0 → keep a ghost
   const optimisticDec = (line: CartLine) => {
     setLines(prev => {
       const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
       if (idx === -1) return prev
       const unitPrice = Number(prev[idx].unitPrice)
       const quantity = Math.max(0, prev[idx].quantity - 1)
+      const next = prev.slice()
       if (quantity === 0) {
-        const next = prev.slice()
-        next.splice(idx, 1)
+        const ghost: CartLine = { ...prev[idx], quantity: 0, subtotal: 0 }
+        next[idx] = ghost
+        ghostsRef.current.set(keyOf(ghost), ghost)
         return next
       }
       const subtotal = +(quantity * unitPrice).toFixed(2)
-      const next = prev.slice()
       next[idx] = { ...prev[idx], quantity, subtotal }
       return next
     })
   }
 
   const optimisticRemove = (line: CartLine) => {
-    setLines(prev => prev.filter(l => !(l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))))
+    // turn into a ghost instead of removing immediately
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
+      if (idx === -1) return prev
+      const ghost: CartLine = { ...prev[idx], quantity: 0, subtotal: 0 }
+      const next = prev.slice()
+      next[idx] = ghost
+      ghostsRef.current.set(keyOf(ghost), ghost)
+      return next
+    })
   }
 
-  /** ---------- Micro-batched "add to cart" queue (per product tile) ---------- */
+  /** ---------- Micro-batched queues ---------- */
 
   type PendingAdd = { pending: number; inflight: boolean; flushTimer: number | null }
   const addQueueRef = useRef<Map<string, PendingAdd>>(new Map())
@@ -559,7 +616,6 @@ export function POSInterface() {
   const scheduleAddFlush = (key: string, product: GridProduct) => {
     const entry = addQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
-    // NEW: batch for a short window to avoid request races
     entry.flushTimer = window.setTimeout(() => {
       entry.flushTimer = null
       void flushAddKey(key, product)
@@ -624,6 +680,9 @@ export function POSInterface() {
 
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid!, seq)
+
+      // post-burst reconcile
+      scheduleReconcile(cid!)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
       if (cartId) await refreshCart(cartId, seq)
@@ -632,8 +691,6 @@ export function POSInterface() {
       if (entry.pending > 0) scheduleAddFlush(key, p)
     }
   }
-
-  /** ---------- Micro-batched +/- queue per cart line ---------- */
 
   type LineDelta = { delta: number; inflight: boolean; flushTimer: number | null }
   const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
@@ -650,7 +707,6 @@ export function POSInterface() {
   const scheduleLineFlush = (key: string, payload: { productId: string; variationId: string | null }) => {
     const entry = lineQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
-    // NEW: batch for a short window to avoid request races
     entry.flushTimer = window.setTimeout(() => {
       entry.flushTimer = null
       void flushLineKey(key, payload)
@@ -677,7 +733,7 @@ export function POSInterface() {
       let ok = false
       let linesPayload: any[] | null = null
 
-      // Try coalesced PATCH with quantity first
+      // Coalesced PATCH with "quantity"
       try {
         const res = await fetch(`/api/pos/cart/${cid}/update-product`, {
           method: "PATCH",
@@ -694,7 +750,7 @@ export function POSInterface() {
         if (ok && Array.isArray(j.lines)) linesPayload = j.lines
       } catch { ok = false }
 
-      // Fallback to qtyAbs × single-step calls
+      // Fallback to repeated single-step calls
       if (!ok) {
         for (let i = 0; i < qtyAbs; i++) {
           const res2 = await fetch(`/api/pos/cart/${cid}/update-product`, {
@@ -719,6 +775,9 @@ export function POSInterface() {
 
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid, seq)
+
+      // post-burst reconcile
+      scheduleReconcile(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to update quantity")
       if (cartId) await refreshCart(cartId, seq)
@@ -734,7 +793,7 @@ export function POSInterface() {
 
   /** ---------- Actions ---------- */
 
-  const TILE_SPINNER_MS = 120 // short, non-blocking visual ping
+  const TILE_SPINNER_MS = 120 // just a tiny visual ping
   const addToCart = async (p: GridProduct) => {
     // instant optimistic
     upsertOptimistic(p)
@@ -780,7 +839,7 @@ export function POSInterface() {
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
-  // Remove keeps the original guarded flow (disable while removing)
+  // Remove → ghost then server confirm
   const withLinePending = async (line: CartLine, fn: () => Promise<void>) => {
     const key = lineKeyOf(line)
     if (pendingLineKeys.has(key)) return
@@ -810,6 +869,7 @@ export function POSInterface() {
         if (!res.ok) { setError(j?.error || "Failed to remove item"); await refreshCart(cartId, seq); return }
         if (Array.isArray(j.lines)) applyServerCart(j.lines, seq)
         else await refreshCart(cartId, seq)
+        scheduleReconcile(cartId)
       } catch (e: any) {
         setError(e?.message || "Failed to remove item")
         await refreshCart(cartId, seq)
@@ -823,6 +883,7 @@ export function POSInterface() {
     }
     setCartId(null)
     setLines([])
+    ghostsRef.current.clear()
 
     if (!parked) {
       setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
