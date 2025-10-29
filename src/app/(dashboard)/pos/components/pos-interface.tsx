@@ -24,8 +24,7 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
-  SheetTitle,
-  SheetTrigger
+  SheetTitle
 } from "@/components/ui/sheet"
 
 type Category = { id: string; name: string; parentId: string | null }
@@ -84,12 +83,10 @@ export function POSInterface() {
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
-  // track which product tiles are currently showing a quick spinner
+  // product-tile quick spinner (non-blocking)
   const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set())
-  // keep tiles disabled until the network finishes to prevent re-click spam
-  const [disabledKeys, setDisabledKeys] = useState<Set<string>>(new Set())
 
-  // per-line pending actions in cart (disables +/−/remove)
+  // cart line pending spinner keys (non-blocking for +/-)
   const [pendingLineKeys, setPendingLineKeys] = useState<Set<string>>(new Set())
 
   // mobile cart drawer
@@ -130,7 +127,7 @@ export function POSInterface() {
     return () => { ignore = true }
   }, [])
 
-  // load store meta when store changes (to get address.country)
+  // load store meta
   useEffect(() => {
     if (!storeId) {
       setStoreCountry(null)
@@ -538,144 +535,250 @@ export function POSInterface() {
     setLines(prev => prev.filter(l => !(l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))))
   }
 
-  /** ---------- Actions (now optimistic) ---------- */
+  /** ---------- Micro-batched "add to cart" queue (per product tile) ---------- */
 
-  const TILE_SPINNER_MS = 1000 // quick visual feedback per your request
-  const addToCart = async (p: GridProduct) => {
+  type PendingAdd = { pending: number; inflight: boolean; flushTimer: number | null }
+  const addQueueRef = useRef<Map<string, PendingAdd>>(new Map())
+
+  const scheduleAddFlush = (key: string, product: GridProduct) => {
+    const entry = addQueueRef.current.get(key)!
+    if (entry.flushTimer != null) return
+    entry.flushTimer = window.setTimeout(() => {
+      entry.flushTimer = null
+      void flushAddKey(key, product)
+    }, 0)
+  }
+
+  const flushAddKey = async (key: string, p: GridProduct) => {
+    const entry = addQueueRef.current.get(key)
+    if (!entry || entry.inflight || entry.pending <= 0) return
+
+    entry.inflight = true
+    const qty = entry.pending
+    entry.pending = 0
+
     try {
-      if (!selectedCustomer?.id) {
-        setError("Pick or create a customer first (Walk-in is fine).")
-        return
-      }
-
-      const key = productKeyOf(p)
-      if (addingKeys.has(key) || disabledKeys.has(key)) return
-
-      // show a quick spinner and also disable the tile until request completes
-      setAddingKeys(prev => new Set(prev).add(key))
-      setDisabledKeys(prev => new Set(prev).add(key))
-      // hide spinner quickly; keep disabled state until finally()
-      setTimeout(() => {
-        setAddingKeys(prev => {
-          const next = new Set(prev)
-          next.delete(key)
-          return next
-        })
-      }, TILE_SPINNER_MS)
-
-      // Optimistic UI immediately
-      upsertOptimistic(p)
-
-      const cid = await ensureCart(selectedCustomer.id)
-      if (!cid) {
-        if (cartId) await refreshCart(cartId)
-        return
-      }
+      const clientId = selectedCustomer?.id
+      if (!clientId) { setError("Pick or create a customer first (Walk-in is fine)."); entry.inflight = false; return }
+      const cid = (await ensureCart(clientId)) || cartId
+      if (!cid) { entry.inflight = false; return }
 
       const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-      const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
-        body: JSON.stringify({
-          productId: p.productId,
-          variationId: p.variationId,
-          quantity: 1,
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setError(j?.error || "Failed to add to cart")
-        await refreshCart(cid)
-        return
+
+      // Try coalesced quantity call
+      let ok = false
+      let linesPayload: any[] | null = null
+      try {
+        const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
+          body: JSON.stringify({
+            productId: p.productId,
+            variationId: p.variationId,
+            quantity: qty,
+          }),
+        })
+        const j = await res.json().catch(() => ({}))
+        ok = res.ok
+        if (ok && Array.isArray(j.lines)) linesPayload = j.lines
+      } catch { ok = false }
+
+      if (!ok) {
+        for (let i = 0; i < qty; i++) {
+          const res2 = await fetch(`/api/pos/cart/${cid}/add-product`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productId: p.productId,
+              variationId: p.variationId,
+              quantity: 1,
+            }),
+          })
+          if (!res2.ok) {
+            const errPayload = await res2.json().catch(() => ({}))
+            setError(errPayload?.error || "Failed to add to cart")
+            await refreshCart(cid)
+            break
+          }
+          const j2 = await res2.json().catch(() => ({}))
+          if (Array.isArray(j2.lines)) linesPayload = j2.lines
+        }
       }
 
-      if (Array.isArray(j.lines)) {
-        setLines(mapServerLines(j.lines))
-        return
-      }
-
-      await refreshCart(cid)
+      if (linesPayload) setLines(mapServerLines(linesPayload))
+      else await refreshCart(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
       if (cartId) await refreshCart(cartId)
     } finally {
-      const key = productKeyOf(p)
-      setDisabledKeys(prev => {
+      entry.inflight = false
+      if (entry.pending > 0) scheduleAddFlush(key, p)
+    }
+  }
+
+  /** ---------- NEW: Micro-batched +/- queue per cart line ---------- */
+
+  type LineDelta = { delta: number; inflight: boolean; flushTimer: number | null }
+  const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
+
+  const setPendingKey = (key: string, on: boolean) => {
+    setPendingLineKeys(prev => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+
+  const scheduleLineFlush = (key: string, payload: { productId: string; variationId: string | null }) => {
+    const entry = lineQueueRef.current.get(key)!
+    if (entry.flushTimer != null) return
+    // micro-batch next tick
+    entry.flushTimer = window.setTimeout(() => {
+      entry.flushTimer = null
+      void flushLineKey(key, payload)
+    }, 0)
+  }
+
+  const flushLineKey = async (key: string, payload: { productId: string; variationId: string | null }) => {
+    const entry = lineQueueRef.current.get(key)
+    if (!entry || entry.inflight || entry.delta === 0) return
+
+    entry.inflight = true
+    const deltaNow = entry.delta
+    entry.delta = 0
+    setPendingKey(key, true)
+
+    try {
+      const cid = cartId
+      if (!cid) { entry.inflight = false; setPendingKey(key, false); return }
+
+      const qtyAbs = Math.abs(deltaNow)
+      const action = deltaNow > 0 ? "add" : "subtract"
+
+      let ok = false
+      let linesPayload: any[] | null = null
+
+      // Try coalesced PATCH with quantity first
+      try {
+        const res = await fetch(`/api/pos/cart/${cid}/update-product`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productId: payload.productId,
+            variationId: payload.variationId,
+            action,
+            quantity: qtyAbs,            // <-- if supported, one call
+          }),
+        })
+        const j = await res.json().catch(() => ({}))
+        ok = res.ok
+        if (ok && Array.isArray(j.lines)) linesPayload = j.lines
+      } catch { ok = false }
+
+      // Fallback to qtyAbs × single-step calls
+      if (!ok) {
+        for (let i = 0; i < qtyAbs; i++) {
+          const res2 = await fetch(`/api/pos/cart/${cid}/update-product`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productId: payload.productId,
+              variationId: payload.variationId,
+              action,
+            }),
+          })
+          if (!res2.ok) {
+            const j2e = await res2.json().catch(() => ({}))
+            setError(j2e?.error || "Failed to update quantity")
+            await refreshCart(cid)
+            break
+          }
+          const j2 = await res2.json().catch(() => ({}))
+          if (Array.isArray(j2.lines)) linesPayload = j2.lines
+        }
+      }
+
+      if (linesPayload) setLines(mapServerLines(linesPayload))
+      else await refreshCart(cid)
+    } catch (e: any) {
+      setError(e?.message || "Failed to update quantity")
+      if (cartId) await refreshCart(cartId)
+    } finally {
+      entry.inflight = false
+      // keep spinner if more clicks landed
+      if (entry.delta !== 0) {
+        scheduleLineFlush(key, payload)
+      } else {
+        setPendingKey(key, false)
+      }
+    }
+  }
+
+  /** ---------- Actions ---------- */
+
+  const TILE_SPINNER_MS = 120 // short, non-blocking visual ping
+  const addToCart = async (p: GridProduct) => {
+    // instant optimistic
+    upsertOptimistic(p)
+
+    // tiny visual ping
+    const key = productKeyOf(p)
+    setAddingKeys(prev => new Set(prev).add(key))
+    window.setTimeout(() => {
+      setAddingKeys(prev => {
         const next = new Set(prev)
         next.delete(key)
         return next
       })
-    }
+    }, TILE_SPINNER_MS)
+
+    // enqueue micro-batched network call
+    const map = addQueueRef.current
+    const entry = map.get(key) ?? { pending: 0, inflight: false, flushTimer: null }
+    entry.pending += 1
+    map.set(key, entry)
+    scheduleAddFlush(key, p)
   }
 
+  // NEW: spam-safe +
+  const inc = async (line: CartLine) => {
+    if (!cartId) return
+    optimisticInc(line)
+    const key = lineKeyOf(line)
+    const map = lineQueueRef.current
+    const entry = map.get(key) ?? { delta: 0, inflight: false, flushTimer: null }
+    entry.delta += 1
+    map.set(key, entry)
+    scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
+  }
+
+  // NEW: spam-safe −
+  const dec = async (line: CartLine) => {
+    if (!cartId) return
+    optimisticDec(line)
+    const key = lineKeyOf(line)
+    const map = lineQueueRef.current
+    const entry = map.get(key) ?? { delta: 0, inflight: false, flushTimer: null }
+    entry.delta -= 1
+    map.set(key, entry)
+    scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
+  }
+
+  // Remove keeps the original guarded flow (disable while removing)
   const withLinePending = async (line: CartLine, fn: () => Promise<void>) => {
     const key = lineKeyOf(line)
     if (pendingLineKeys.has(key)) return
-    setPendingLineKeys(prev => new Set(prev).add(key))
+    setPendingKey(key, true)
     try {
       await fn()
     } finally {
-      setPendingLineKeys(prev => {
-        const next = new Set(prev)
-        next.delete(key)
-        return next
-      })
+      setPendingKey(key, false)
     }
-  }
-
-  const inc = async (line: CartLine) => {
-    if (!cartId) return
-    // optimistic
-    optimisticInc(line)
-    await withLinePending(line, async () => {
-      try {
-        const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            productId: line.productId,
-            variationId: line.variationId,
-            action: "add",
-          }),
-        })
-        const j = await res.json().catch(() => ({}))
-        if (!res.ok) { setError(j?.error || "Failed to update quantity"); await refreshCart(cartId); return }
-        if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
-      } catch (e: any) {
-        setError(e?.message || "Failed to update quantity")
-        await refreshCart(cartId)
-      }
-    })
-  }
-
-  const dec = async (line: CartLine) => {
-    if (!cartId) return
-    // optimistic
-    optimisticDec(line)
-    await withLinePending(line, async () => {
-      try {
-        const res = await fetch(`/api/pos/cart/${cartId}/update-product`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            productId: line.productId,
-            variationId: line.variationId,
-            action: "subtract",
-          }),
-        })
-        const j = await res.json().catch(() => ({}))
-        if (!res.ok) { setError(j?.error || "Failed to update quantity"); await refreshCart(cartId); return }
-        if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
-      } catch (e: any) {
-        setError(e?.message || "Failed to update quantity")
-        await refreshCart(cartId)
-      }
-    })
   }
 
   const removeLine = async (line: CartLine) => {
     if (!cartId) return
-    // optimistic
     optimisticRemove(line)
     await withLinePending(line, async () => {
       try {
@@ -769,7 +872,6 @@ export function POSInterface() {
               products={filteredProducts}
               onAddToCart={addToCart}
               addingKeys={addingKeys}
-              disabledKeys={disabledKeys}
             />
           </div>
 
@@ -792,7 +894,7 @@ export function POSInterface() {
               subtotal={subtotalEstimate}
               discountAmount={discountAmount}
               total={totalEstimate}
-              pendingKeys={pendingLineKeys}
+              pendingKeys={pendingLineKeys}   // spinner only, not blocking +/-
             />
           </div>
         </div>
@@ -800,15 +902,16 @@ export function POSInterface() {
         {/* Mobile bottom bar → opens cart drawer */}
         <div className="lg:hidden sticky bottom-0 inset-x-0 border-t bg-card p-3">
           <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
-            <SheetTrigger asChild>
-              <button className="flex w-full items-center justify-between rounded-md bg-primary px-4 py-3 text-primary-foreground">
-                <span className="flex items-center gap-2">
-                  <ShoppingCart className="h-4 w-4" />
-                  Cart • {itemCount}
-                </span>
-                <span>${totalEstimate.toFixed(2)}</span>
-              </button>
-            </SheetTrigger>
+            <button
+              className="flex w-full items-center justify-between rounded-md bg-primary px-4 py-3 text-primary-foreground"
+              onClick={() => setCartSheetOpen(true)}
+            >
+              <span className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4" />
+                Cart • {itemCount}
+              </span>
+              <span>${totalEstimate.toFixed(2)}</span>
+            </button>
             <SheetContent side="bottom" className="h-[85vh] p-0 rounded-t-2xl">
               <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-muted" />
               <SheetHeader className="sr-only">
@@ -836,7 +939,7 @@ export function POSInterface() {
                   subtotal={subtotalEstimate}
                   discountAmount={discountAmount}
                   total={totalEstimate}
-                  pendingKeys={pendingLineKeys}
+                  pendingKeys={pendingLineKeys}   // spinner only, not blocking +/-
                 />
               </div>
             </SheetContent>

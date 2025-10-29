@@ -18,10 +18,8 @@ export type GridProduct = {
 type ProductGridProps = {
   products: GridProduct[]
   onAddToCart: (p: GridProduct) => void
-  /** Tiles briefly show this spinner after optimistic add */
+  /** Tiles briefly show this spinner after optimistic add (non-blocking) */
   addingKeys?: Set<string>
-  /** Tiles remain disabled (no clicks) while the network call is in-flight */
-  disabledKeys?: Set<string>
 }
 
 function InitialsCircle({ text }: { text: string }) {
@@ -39,24 +37,23 @@ function InitialsCircle({ text }: { text: string }) {
   )
 }
 
-export function ProductGrid({ products, onAddToCart, addingKeys, disabledKeys }: ProductGridProps) {
+export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridProps) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {products.map((product) => {
           const key = `${product.productId}:${product.variationId ?? "base"}`
           const isLoading = addingKeys?.has(key) ?? false
-          const isDisabled = disabledKeys?.has(key) ?? false
 
           return (
             <Card
               key={key}
               className="group relative cursor-pointer overflow-hidden transition-all hover:shadow-lg"
               onClick={() => {
-                if (!isLoading && !isDisabled) onAddToCart(product)
+                // Always allow clicks — queue coalesces network work
+                onAddToCart(product)
               }}
               aria-busy={isLoading}
-              aria-disabled={isDisabled}
             >
               <div className="relative aspect-square bg-muted">
                 {product.image ? (
@@ -71,32 +68,25 @@ export function ProductGrid({ products, onAddToCart, addingKeys, disabledKeys }:
                   <InitialsCircle text={product.title} />
                 )}
 
-                {/* Hover CTA (hidden while loading/disabled) */}
-                {!isLoading && !isDisabled && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all group-hover:bg-black/10">
-                    <Button
-                      size="icon"
-                      className="scale-0 transition-transform group-hover:scale-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onAddToCart(product)
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
+                {/* Hover CTA (still works while spinner pings) */}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all group-hover:bg-black/10">
+                  <Button
+                    size="icon"
+                    className="scale-0 transition-transform group-hover:scale-100"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onAddToCart(product)
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
 
-                {/* Quick spinner overlay (very short) */}
+                {/* Quick spinner overlay — non-blocking (pointer-events: none) */}
                 {isLoading && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
+                  <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/30">
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
                   </div>
-                )}
-
-                {/* Disabled glass if network in-flight but spinner already gone */}
-                {!isLoading && isDisabled && (
-                  <div className="absolute inset-0 z-10 bg-black/10" />
                 )}
               </div>
 

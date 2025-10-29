@@ -34,7 +34,7 @@ type CartProps = {
   total: number
   // layout variant
   variant?: "inline" | "sheet"
-  // NEW: which cart lines are pending a server update
+  // which cart lines have queued/inflight server updates (spinner only)
   pendingKeys?: Set<string>
 }
 
@@ -98,10 +98,7 @@ export function Cart({
               const pending = isPending(l)
               return (
                 <Card key={keyOf(l)} className="p-3 relative">
-                  {/* Subtle overlay while pending to block spam clicks */}
-                  {pending && (
-                    <div className="absolute inset-0 z-10 bg-black/5 backdrop-blur-[1px] rounded-md" />
-                  )}
+                  {/* NOTE: No blocking overlay; show only a tiny spinner while pending */}
                   <div className="flex gap-3">
                     {l.image ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -119,8 +116,8 @@ export function Cart({
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6"
-                          onClick={() => !pending && onRemove(l)}
-                          disabled={pending}
+                          onClick={() => onRemove(l)}
+                          disabled={pending}  // keep remove guarded while syncing
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -132,8 +129,7 @@ export function Cart({
                             variant="outline"
                             size="icon"
                             className="h-7 w-7 bg-transparent"
-                            onClick={() => !pending && onDec(l)}
-                            disabled={pending}
+                            onClick={() => onDec(l)}   // never disabled; parent coalesces
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
@@ -142,13 +138,12 @@ export function Cart({
                             variant="outline"
                             size="icon"
                             className="h-7 w-7 bg-transparent"
-                            onClick={() => !pending && onInc(l)}
-                            disabled={pending}
+                            onClick={() => onInc(l)}   // never disabled; parent coalesces
                           >
                             <Plus className="h-3 w-3" />
                           </Button>
 
-                          {/* Tiny inline spinner when pending */}
+                          {/* Tiny inline spinner when queued/inflight */}
                           {pending && (
                             <span className="ml-2 inline-flex items-center">
                               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
