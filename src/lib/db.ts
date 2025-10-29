@@ -880,6 +880,27 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+  clientEngagement: {
+    organizationId: string;
+    clientId: string;
+    lockUntil: Date | null;
+    lastEngagedAt: Date | null;
+    inactiveSweepAt: Date | null;
+  };
+
+  ruleEngagement: {
+    organizationId: string;
+    ruleId: string;
+    clientId: string;
+    lockUntil: Date | null;
+    lastSentAt: Date | null;
+    inactiveSweepAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+
 }
 
 /* ──────────────────────────────────────────────────────────────── *

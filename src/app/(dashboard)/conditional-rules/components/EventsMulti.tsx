@@ -1,3 +1,5 @@
+// /src/app/(dashboard)/conditional-rules/components/EventsMulti.tsx
+
 "use client";
 
 import { Checkbox } from "@/components/ui/checkbox";

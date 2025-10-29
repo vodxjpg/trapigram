@@ -1,4 +1,3 @@
-// src/app/api/rules/[id]/route.ts
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -6,25 +5,50 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
+/* ───────────────────────────── Schemas ───────────────────────────── */
+
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed", "order_pending_payment", "order_paid", "order_completed",
-  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
-  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
+  "order_placed",
+  "order_pending_payment",
+  "order_paid",
+  "order_completed",
+  "order_cancelled",
+  "order_refunded",
+  "order_partially_paid",
+  "order_shipped",
+  "order_message",
+  "ticket_created",
+  "ticket_replied",
+  "manual",
+  "customer_inactive",
 ]);
 
 const scopeEnum = z.enum(["per_order", "per_customer"]);
 
-const conditionsSchema = z.object({
-  op: z.enum(["AND", "OR"]),
-  items: z.array(
-    z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-      z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
-    ])
-  ).min(1),
-}).partial();
+const conditionsSchema = z
+  .object({
+    op: z.enum(["AND", "OR"]),
+    items: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("contains_product"),
+            productIds: z.array(z.string()).min(1),
+          }),
+          z.object({
+            kind: z.literal("order_total_gte"),
+            amount: z.coerce.number().min(0),
+          }),
+          z.object({
+            kind: z.literal("no_order_days_gte"),
+            days: z.coerce.number().int().min(1),
+          }),
+        ])
+      )
+      .min(1),
+  })
+  .partial();
 
 const positiveOneDecimal = z
   .coerce.number()
@@ -33,40 +57,46 @@ const positiveOneDecimal = z
   })
   .refine((n) => n > 0, { message: "Points must be > 0" });
 
-const multiPayload = z.object({
-  templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(),
-  conditions: conditionsSchema.optional(),
-  actions: z.array(
-    z.discriminatedUnion("type", [
-      z.object({
-        type: z.literal("send_coupon"),
-        payload: z.object({ couponId: z.string().min(1) }).optional(),
-      }),
-      z.object({
-        type: z.literal("product_recommendation"),
-        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
-      }),
-      z.object({
-        type: z.literal("multiply_points"),
-        payload: z.object({
-          factor: z.coerce.number().refine((n) => n > 0, {
-            message: "Multiplier must be > 0",
+/** Define multiPayload for PATCH (keeps validation for conditions/actions and cooldownDays). */
+const multiPayload = z
+  .object({
+    templateSubject: z.string().optional(),
+    templateMessage: z.string().optional(),
+    conditions: conditionsSchema.optional(),
+    actions: z
+      .array(
+        z.discriminatedUnion("type", [
+          z.object({
+            type: z.literal("send_coupon"),
+            payload: z.object({ couponId: z.string().min(1) }).optional(),
           }),
-          description: z.string().optional(),
-        }),
-      }),
-      z.object({
-        type: z.literal("award_points"),
-        payload: z.object({
-          points: positiveOneDecimal,
-          description: z.string().optional(),
-        }),
-      }),
-    ])
-  ).min(1),
-  scope: scopeEnum.optional(),
-}).partial();
+          z.object({
+            type: z.literal("product_recommendation"),
+            payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+          }),
+          z.object({
+            type: z.literal("multiply_points"),
+            payload: z.object({
+              factor: z.coerce.number().refine((n) => n > 0, {
+                message: "Multiplier must be > 0",
+              }),
+              description: z.string().optional(),
+            }),
+          }),
+          z.object({
+            type: z.literal("award_points"),
+            payload: z.object({
+              points: positiveOneDecimal,
+              description: z.string().optional(),
+            }),
+          }),
+        ])
+      )
+      .min(1),
+    scope: scopeEnum.optional(),
+    cooldownDays: z.coerce.number().int().min(1).optional(), // UPDATED: no upper cap
+  })
+  .partial();
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -77,6 +107,7 @@ const updateSchema = z.object({
   countries: z.array(z.string()).optional(),
   action: z.enum(["send_coupon", "product_recommendation", "multi"]).optional(),
   channels: z.array(channelsEnum).optional(),
+  // Accept multiPayload (validated) OR any object (so single-action payloads incl. cooldownDays are preserved).
   payload: z
     .union([multiPayload, z.record(z.any())])
     .optional()
@@ -87,13 +118,16 @@ const updateSchema = z.object({
     }, { message: "Invalid payload.conditions" }),
 });
 
+/* ───────────────────────────── Helpers ───────────────────────────── */
+
 function couponCoversCountries(couponCountries: string[], ruleCountries: string[]) {
   if (!ruleCountries?.length) return true;
   if (!couponCountries?.length) return false;
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-/* ─────────────────── GET ─────────────────── */
+/* ───────────────────────────── Handlers ───────────────────────────── */
+
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> } // Next 16
@@ -110,7 +144,7 @@ export async function GET(
          FROM "automationRules"
         WHERE id = $1 AND "organizationId" = $2
         LIMIT 1`,
-      [id, organizationId],
+      [id, organizationId]
     );
     if (!rows.length) {
       return NextResponse.json({ error: "Rule not found" }, { status: 404 });
@@ -120,7 +154,8 @@ export async function GET(
       ...r,
       countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
       channels: Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels || "[]"),
-      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
+      payload:
+        typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : r.payload ?? {},
     };
     return NextResponse.json(rule);
   } catch (e) {
@@ -129,7 +164,6 @@ export async function GET(
   }
 }
 
-/* ─────────────────── PATCH ─────────────────── */
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> } // Next 16
@@ -145,7 +179,9 @@ export async function PATCH(
     const parsed = updateSchema.parse(body);
 
     // Load existing to compute final values for validation
-    const { rows: [existing] } = await pool.query(
+    const {
+      rows: [existing],
+    } = await pool.query(
       `SELECT countries, action, event, payload
          FROM "automationRules"
         WHERE id = $1 AND "organizationId" = $2`,
@@ -154,12 +190,17 @@ export async function PATCH(
     if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
     const finalCountries: string[] =
-      parsed.countries ?? (Array.isArray(existing.countries) ? existing.countries : JSON.parse(existing.countries || "[]"));
+      parsed.countries ??
+      (Array.isArray(existing.countries)
+        ? existing.countries
+        : JSON.parse(existing.countries || "[]"));
     const finalAction: string = parsed.action ?? existing.action;
     const finalEvent: string = parsed.event ?? existing.event;
     const finalPayload: any =
       parsed.payload ??
-      (typeof existing.payload === "string" ? JSON.parse(existing.payload || "{}") : existing.payload || {});
+      (typeof existing.payload === "string"
+        ? JSON.parse(existing.payload || "{}")
+        : existing.payload || {});
 
     // Validate condition kinds vs event
     const cItems = finalPayload?.conditions?.items ?? [];
@@ -214,20 +255,27 @@ export async function PATCH(
       const { rows } = await pool.query(
         `SELECT id, countries FROM coupons
          WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
-        [organizationId, unique],
+        [organizationId, unique]
       );
       const map = new Map(
-        rows.map(r => [
+        rows.map((r) => [
           String(r.id),
           Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
         ])
       );
       for (const cid of unique) {
         const cc = map.get(String(cid));
-        if (!cc) return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+        if (!cc)
+          return NextResponse.json(
+            { error: "Coupon not found for this organization." },
+            { status: 400 }
+          );
         if (!couponCoversCountries(cc, finalCountries)) {
           const missing = finalCountries.filter((c: string) => !cc.includes(c));
-          return NextResponse.json({ error: `Coupon isn’t valid for: ${missing.join(", ")}` }, { status: 400 });
+          return NextResponse.json(
+            { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
+            { status: 400 }
+          );
         }
       }
     }
@@ -240,11 +288,14 @@ export async function PATCH(
     for (const [key, value] of Object.entries(parsed)) {
       if (value === undefined) continue;
       if (key === "countries" || key === "channels") {
-        updates.push(`"${key}" = $${i++}`); values.push(JSON.stringify(value));
+        updates.push(`"${key}" = $${i++}`);
+        values.push(JSON.stringify(value));
       } else if (key === "payload") {
-        updates.push(`"payload" = $${i++}`); values.push(JSON.stringify(value));
+        updates.push(`"payload" = $${i++}`);
+        values.push(JSON.stringify(value));
       } else {
-        updates.push(`"${key}" = $${i++}`); values.push(value);
+        updates.push(`"${key}" = $${i++}`);
+        values.push(value);
       }
     }
 
@@ -258,14 +309,15 @@ export async function PATCH(
           SET ${updates.join(", ")}, "updatedAt" = NOW()
         WHERE id = $${i++} AND "organizationId" = $${i}
       RETURNING *`,
-      values,
+      values
     );
     if (!res.rowCount) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
     const row = res.rows[0];
     row.countries = JSON.parse(row.countries || "[]");
     row.channels = JSON.parse(row.channels || "[]");
-    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
+    row.payload =
+      typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : row.payload ?? {};
     return NextResponse.json(row);
   } catch (error: any) {
     console.error("[PATCH /api/rules/:id] error", error);
@@ -276,7 +328,6 @@ export async function PATCH(
   }
 }
 
-/* ─────────────────── DELETE ─────────────────── */
 export async function DELETE(
   req: NextRequest,
   context: { params: Promise<{ id: string }> } // Next 16
@@ -290,7 +341,7 @@ export async function DELETE(
   try {
     const res = await pool.query(
       `DELETE FROM "automationRules" WHERE id = $1 AND "organizationId" = $2 RETURNING id`,
-      [id, organizationId],
+      [id, organizationId]
     );
     if (!res.rowCount) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
     return NextResponse.json({ ok: true });

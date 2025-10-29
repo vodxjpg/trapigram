@@ -2,12 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
+
 export const runtime = "nodejs";
+
+/* ───────────────────────────── Schemas ───────────────────────────── */
+
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed", "order_pending_payment", "order_paid", "order_completed",
-  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
-  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
+  "order_placed",
+  "order_pending_payment",
+  "order_paid",
+  "order_completed",
+  "order_cancelled",
+  "order_refunded",
+  "order_partially_paid",
+  "order_shipped",
+  "order_message",
+  "ticket_created",
+  "ticket_replied",
+  "manual",
+  "customer_inactive",
 ]);
 
 const scopeEnum = z.enum(["per_order", "per_customer"]);
@@ -15,35 +29,51 @@ const scopeEnum = z.enum(["per_order", "per_customer"]);
 const conditionsSchema = z
   .object({
     op: z.enum(["AND", "OR"]),
-    items: z.array(
-      z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-        z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-        z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
-      ])
-    ).min(1),
+    items: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("contains_product"),
+            productIds: z.array(z.string()).min(1),
+          }),
+          z.object({
+            kind: z.literal("order_total_gte"),
+            amount: z.coerce.number().min(0),
+          }),
+          z.object({
+            kind: z.literal("no_order_days_gte"),
+            days: z.coerce.number().int().min(1),
+          }),
+        ])
+      )
+      .min(1),
   })
   .partial()
-  .refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
+  .refine((v) => !v.items || !!v.op, {
+    message: "Provide op when items exist",
+    path: ["op"],
+  });
 
-/** legacy single-action payloads */
+/** legacy single-action payloads (now include cooldownDays) */
 const sendCouponPayload = z.object({
   couponId: z.string().min(1),
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
-  scope: scopeEnum.optional(), // NEW
+  scope: scopeEnum.optional(),
+  cooldownDays: z.coerce.number().int().min(1).optional(), // UPDATED: no upper cap
 });
+
 const productRecoPayload = z.object({
   productIds: z.array(z.string()).optional(),
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
-  scope: scopeEnum.optional(), // NEW
+  scope: scopeEnum.optional(),
+  cooldownDays: z.coerce.number().int().min(1).optional(), // UPDATED: no upper cap
 });
 
 /** helpers */
-// Coerce to number, ensure <= 1 decimal, and > 0 without using .gt (for broader Zod compat)
 const positiveOneDecimal = z
   .coerce.number()
   .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
@@ -51,41 +81,43 @@ const positiveOneDecimal = z
   })
   .refine((n) => n > 0, { message: "Points must be > 0" });
 
-/** new multi-action payload (supports 4 action types) */
+/** multi-action payload (also carries cooldownDays) */
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
-  actions: z.array(
-    z.discriminatedUnion("type", [
-      z.object({
-        type: z.literal("send_coupon"),
-        payload: z.object({ couponId: z.string().min(1) }).optional(),
-      }),
-      z.object({
-        type: z.literal("product_recommendation"),
-        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
-      }),
-      z.object({
-        type: z.literal("multiply_points"),
-        payload: z.object({
-          // avoid .gt for older Zod; use refine instead
-          factor: z.coerce.number().refine((n) => n > 0, {
-            message: "Multiplier must be > 0",
+  actions: z
+    .array(
+      z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("send_coupon"),
+          payload: z.object({ couponId: z.string().min(1) }).optional(),
+        }),
+        z.object({
+          type: z.literal("product_recommendation"),
+          payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+        }),
+        z.object({
+          type: z.literal("multiply_points"),
+          payload: z.object({
+            factor: z.coerce.number().refine((n) => n > 0, {
+              message: "Multiplier must be > 0",
+            }),
+            description: z.string().optional(),
           }),
-          description: z.string().optional(),
         }),
-      }),
-      z.object({
-        type: z.literal("award_points"),
-        payload: z.object({
-          points: positiveOneDecimal,
-          description: z.string().optional(),
+        z.object({
+          type: z.literal("award_points"),
+          payload: z.object({
+            points: positiveOneDecimal,
+            description: z.string().optional(),
+          }),
         }),
-      }),
-    ])
-  ).min(1, "Add at least one action"),
-  scope: scopeEnum.optional(), // NEW
+      ])
+    )
+    .min(1, "Add at least one action"),
+  scope: scopeEnum.optional(),
+  cooldownDays: z.coerce.number().int().min(1).optional(), // UPDATED: no upper cap
 });
 
 const baseRule = z.object({
@@ -99,16 +131,29 @@ const baseRule = z.object({
 });
 
 const createSchema = z.discriminatedUnion("action", [
-  baseRule.extend({ action: z.literal("send_coupon"), payload: sendCouponPayload }),
-  baseRule.extend({ action: z.literal("product_recommendation"), payload: productRecoPayload }),
-  baseRule.extend({ action: z.literal("multi"), payload: multiPayload }),
+  baseRule.extend({
+    action: z.literal("send_coupon"),
+    payload: sendCouponPayload,
+  }),
+  baseRule.extend({
+    action: z.literal("product_recommendation"),
+    payload: productRecoPayload,
+  }),
+  baseRule.extend({
+    action: z.literal("multi"),
+    payload: multiPayload,
+  }),
 ]);
+
+/* ───────────────────────────── Helpers ───────────────────────────── */
 
 function couponCoversCountries(couponCountries: string[], ruleCountries: string[]) {
   if (!ruleCountries?.length) return true;
   if (!couponCountries?.length) return false;
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
+
+/* ───────────────────────────── Handlers ───────────────────────────── */
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -121,14 +166,15 @@ export async function GET(req: NextRequest) {
          FROM "automationRules"
         WHERE "organizationId" = $1
         ORDER BY priority ASC, "updatedAt" DESC, "createdAt" DESC`,
-      [organizationId],
+      [organizationId]
     );
 
     const rules = rows.map((r) => ({
       ...r,
       countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
       channels: Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels || "[]"),
-      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
+      payload:
+        typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : r.payload ?? {},
     }));
 
     return NextResponse.json({ rules });
@@ -151,20 +197,14 @@ export async function POST(req: NextRequest) {
     const items = parsed.payload?.conditions?.items ?? [];
     const ev = parsed.event as string;
 
-    // business constraints for the two new actions
+    // business constraints
     if (parsed.action === "multi" && Array.isArray(parsed.payload?.actions)) {
-      // multiply_points only valid on order_* events
-      if (
-        ev === "customer_inactive" &&
-        parsed.payload.actions.some((a: any) => a.type === "multiply_points")
-      ) {
+      if (ev === "customer_inactive" && parsed.payload.actions.some((a: any) => a.type === "multiply_points")) {
         return NextResponse.json(
           { error: "Action 'multiply_points' is only valid for order events." },
           { status: 400 }
         );
       }
-      // award_points is allowed on order_* and customer_inactive (buyer only)
-      // nothing else to validate here
     }
 
     if (/^order_/.test(ev) && items.some((i: any) => i.kind === "no_order_days_gte")) {
@@ -208,18 +248,29 @@ export async function POST(req: NextRequest) {
       if (unique.length) {
         const { rows } = await pool.query(
           `SELECT id, countries FROM coupons
-   WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
-          [organizationId, unique],
+           WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
+          [organizationId, unique]
         );
-        const map = new Map(rows.map(r => [String(r.id), Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]")]));
+        const map = new Map(
+          rows.map((r) => [
+            String(r.id),
+            Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+          ])
+        );
         for (const cid of unique) {
           const cc = map.get(String(cid));
           if (!cc) {
-            return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+            return NextResponse.json(
+              { error: "Coupon not found for this organization." },
+              { status: 400 }
+            );
           }
           if (!couponCoversCountries(cc, ruleCountries)) {
             const missing = ruleCountries.filter((c) => !cc.includes(c));
-            return NextResponse.json({ error: `Coupon isn’t valid for: ${missing.join(", ")}` }, { status: 400 });
+            return NextResponse.json(
+              { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
+              { status: 400 }
+            );
           }
         }
       }
@@ -230,8 +281,7 @@ export async function POST(req: NextRequest) {
       `INSERT INTO "automationRules"
          (id,"organizationId",name,description,enabled,priority,event,
           countries,action,channels,payload,"createdAt","updatedAt")
-       VALUES ($1,$2,$3,$4,$5,$6,$7,
-               $8,$9,$10,$11,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
        RETURNING *`,
       [
         id,
@@ -245,13 +295,14 @@ export async function POST(req: NextRequest) {
         parsed.action,
         JSON.stringify(parsed.channels ?? []),
         JSON.stringify(parsed.payload ?? {}),
-      ],
+      ]
     );
 
     const row = res.rows[0];
     row.countries = JSON.parse(row.countries || "[]");
     row.channels = JSON.parse(row.channels || "[]");
-    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
+    row.payload =
+      typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : row.payload ?? {};
     return NextResponse.json(row, { status: 201 });
   } catch (error: any) {
     console.error("[POST /api/rules] error", error);

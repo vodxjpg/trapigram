@@ -1,4 +1,3 @@
-// src/app/(dashboard)/conditional-rules/components/RuleForm.tsx
 "use client";
 
 import * as React from "react";
@@ -51,7 +50,7 @@ const quillModules = {
 };
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const scopeEnum = z.enum(["per_order", "per_customer"]); // NEW
+const scopeEnum = z.enum(["per_order", "per_customer"]);
 
 // UI action item (no subject/body here—shared at rule level)
 const UiActionSchema = z.discriminatedUnion("type", [
@@ -106,6 +105,7 @@ const ConditionsSchema = z
   })
   .partial();
 
+/** NEW: add cooldownDays to the form schema (only used for customer_inactive) */
 export const RuleSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional().nullable(),
@@ -132,13 +132,16 @@ export const RuleSchema = z.object({
   templateMessage: z.string().optional(),
 
   // run scope (lives in payload on the server)
-  runScope: scopeEnum.default("per_order"), // NEW
+  runScope: scopeEnum.default("per_order"),
 
   // one conditions group per rule (applies to all actions)
   conditions: ConditionsSchema.optional(),
 
   // multiple actions; they only carry data (couponId/productIds)
   actions: z.array(UiActionSchema).min(1, "Add at least one action"),
+
+  /** NEW: repeat every N days for customer_inactive; keep optional for other events */
+  cooldownDays: z.coerce.number().int().min(1).optional(),
 });
 
 export type RuleFormValues = z.infer<typeof RuleSchema>;
@@ -203,7 +206,6 @@ function parseMaybeJson<T = any>(v: any): T {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Normalization helpers for legacy/varied stored rule action shapes
-// Ensures previously-saved actions rehydrate into the UI as expected.
 // ──────────────────────────────────────────────────────────────────────────────
 type AnyAction = {
   type?: string;
@@ -221,7 +223,6 @@ function normalizeActionType(t?: string): ActionItem["type"] {
   if (s === "multiply_points" || s === "set_points_multiplier" || s === "points_multiplier")
     return "multiply_points";
   if (s === "award_points" || s === "grant_points") return "award_points";
-  // default safely to coupon (UI already guards with validation)
   return "send_coupon";
 }
 
@@ -284,7 +285,6 @@ function normalizeOneAction(raw: AnyAction): ActionItem {
     } as ActionItem;
   }
 
-  // fallback (keeps form usable)
   return { type: "send_coupon", payload: {} } as ActionItem;
 }
 
@@ -294,9 +294,6 @@ function normalizeActions(input: any): ActionItem[] {
   return arr.map(normalizeOneAction);
 }
 
-// Accept an "object map" actions payload, e.g.
-// { send_coupon: {...}, product_recommendation: {...} }
-// and normalize to an array of { type, payload }.
 function normalizeActionsObjectMap(maybeObj: any): ActionItem[] {
   if (!maybeObj || typeof maybeObj !== "object" || Array.isArray(maybeObj)) return [];
   const out: AnyAction[] = [];
@@ -342,9 +339,11 @@ export default function RuleForm({
       channels: ["email"],
       templateSubject: "",
       templateMessage: "",
-      runScope: "per_order", // default for order events
+      runScope: "per_order",
       conditions: { op: "AND", items: [] },
       actions: [{ type: "send_coupon", payload: {} }],
+      /** NEW: sensible default if the user switches to customer_inactive */
+      cooldownDays: 30,
     },
   });
 
@@ -357,12 +356,11 @@ export default function RuleForm({
     replace: replaceActions,
   } = useFieldArray({ control: form.control, name: "actions" });
 
-  // Normalize legacy defaults AND pick up payload.scope if present.
+  // Normalize legacy defaults AND pick up payload.scope / cooldownDays if present.
   React.useEffect(() => {
     if (!defaultValues) return;
     const dv: any = defaultValues;
 
-    // Prefer single-rule info coming from `existingSingle` when editing.
     const es = existingSingle ?? {};
     const payload = parseMaybeJson(dv.payload) || parseMaybeJson(es.payload) || {};
 
@@ -415,6 +413,11 @@ export default function RuleForm({
       }
     }
 
+    const existingCooldown =
+      Number(payload?.cooldownDays) && Number(payload?.cooldownDays) > 0
+        ? Math.floor(Number(payload.cooldownDays))
+        : 30;
+
     // Only auto-insert a default action for CREATE mode. EDIT shows empty state
     if (!actions.length && mode === "create") {
       actions = [{ type: "send_coupon", payload: {} }];
@@ -433,6 +436,7 @@ export default function RuleForm({
       runScope: inferredScope,
       conditions: payload.conditions ?? { op: "AND", items: [] },
       actions,
+      cooldownDays: existingCooldown,
     } as RuleFormValues);
 
     // Sync the field-array immediately after reset so UI renders values
@@ -441,7 +445,7 @@ export default function RuleForm({
 
   const disabled = form.formState.isSubmitting;
 
-  // Watch specific fields; fall back to current values to avoid gaps after reset
+  // Watch specific fields
   const actionsValues =
     (form.watch("actions") ?? form.getValues("actions") ?? []) as ActionItem[];
   const currentEvent = form.watch("event") ?? form.getValues("event");
@@ -453,16 +457,16 @@ export default function RuleForm({
     enabled: form.watch("enabled"),
     conditions: form.watch("conditions"),
     channels: form.watch("channels"),
+    cooldownDays: form.watch("cooldownDays"),
   };
 
   const allowedKinds = allowedKindsForEvent(currentEvent);
 
-  // If user selects "customer_inactive", force per_customer in the UI.
+  // If user selects "customer_inactive", force per_customer and seed defaults
   React.useEffect(() => {
     if (currentEvent === "customer_inactive" && w.runScope !== "per_customer") {
       form.setValue("runScope", "per_customer", { shouldDirty: true });
     }
-  // Auto-seed a days condition for a nicer UX
     if (currentEvent === "customer_inactive") {
       const hasDays =
         Array.isArray(w.conditions?.items) &&
@@ -470,9 +474,12 @@ export default function RuleForm({
       if (!hasDays) {
         form.setValue(
           "conditions",
-          { op: "AND", items: [{ kind: "no_order_days_gte", days: 5 }] } as any,
+          { op: "AND", items: [{ kind: "no_order_days_gte", days: 30 }] } as any,
           { shouldDirty: true }
         );
+      }
+      if (!Number.isFinite(Number(w.cooldownDays)) || Number(w.cooldownDays) < 1) {
+        form.setValue("cooldownDays", 30, { shouldDirty: true });
       }
     }
   }, [currentEvent]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -495,6 +502,22 @@ export default function RuleForm({
       return;
     }
 
+    const payload: any = {
+      templateSubject: values.templateSubject,
+      templateMessage: values.templateMessage,
+      conditions: values.conditions,
+      actions: values.actions,
+      scope: values.runScope,
+    };
+
+    // Only send cooldownDays for customer_inactive (keeps payload clean)
+    if (values.event === "customer_inactive") {
+      payload.cooldownDays =
+        Number(values.cooldownDays) && Number(values.cooldownDays) > 0
+          ? Math.floor(Number(values.cooldownDays))
+          : 30;
+    }
+
     const serverBody = {
       name: values.name,
       description: values.description,
@@ -504,13 +527,7 @@ export default function RuleForm({
       countries: values.countries,
       channels: values.channels,
       action: "multi",
-      payload: {
-        templateSubject: values.templateSubject,
-        templateMessage: values.templateMessage,
-        conditions: values.conditions,
-        actions: values.actions,
-        scope: values.runScope, // NEW → backend uses this for dedupe
-      },
+      payload,
     };
 
     const url = mode === "create" ? "/api/rules" : `/api/rules/${id}`;
@@ -541,7 +558,6 @@ export default function RuleForm({
   };
 
   const removeAction = (idx: number) => {
-    // Allow removing down to zero in EDIT mode; in CREATE we keep at least one
     if (mode === "create" && actionFields.length <= 1) return;
     removeActionRHF(idx);
   };
@@ -562,7 +578,7 @@ export default function RuleForm({
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Label htmlFor="priority">Priority</Label>
-                <Hint text="Lower number runs earlier. Ties are broken by the newest rule. Priority does not stop other rules from running." />
+                <Hint text="Lower number runs earlier. Ties are broken by the newest rule." />
               </div>
               <Input
                 id="priority"
@@ -586,7 +602,7 @@ export default function RuleForm({
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Label>Trigger</Label>
-                <Hint text="When should this rule check and run? Choose an order status or 'customer inactive'." />
+                <Hint text="Choose an order status or 'customer inactive'." />
               </div>
               <Controller
                 control={form.control}
@@ -620,7 +636,7 @@ export default function RuleForm({
               />
               <div className="flex items-center gap-2">
                 <Label htmlFor="enabled">Enabled</Label>
-                <Hint text="Turn off to keep the rule without running it. You can re-enable anytime." />
+                <Hint text="Keep a rule without running it by turning it off." />
               </div>
             </div>
           </div>
@@ -630,7 +646,7 @@ export default function RuleForm({
         <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Run scope</h2>
-            <Hint text="Decide how often this rule can fire. Per order = once for each order. Per customer = only once ever for that customer." />
+            <Hint text="Per order = once for each order. Per customer = only once ever for that customer." />
           </div>
           <div className="space-y-2">
             <RadioGroup
@@ -649,11 +665,11 @@ export default function RuleForm({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per order</span>
-                    <Hint text="We’ll run this rule once for each order that matches. If a customer places 3 orders, it can run 3 times (one per order)." />
+                    <Hint text="Runs once for each matching order." />
                   </div>
                   {currentEvent === "customer_inactive" && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Not available for “customer inactive” (there’s no order for that trigger).
+                      Not available for “customer inactive”.
                     </p>
                   )}
                 </div>
@@ -664,22 +680,54 @@ export default function RuleForm({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per customer</span>
-                    <Hint text="We’ll run this rule only once for each customer, across all time. Even if they make future orders, it won’t re-run." />
+                    <Hint text="Runs at most once per customer (unless the sweep repeats it by cooldown)." />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Tip: For re-engagement cycles, consider separate rules (e.g., a different coupon at 60/120 days).
+                    Tip: For re-engagement cycles, consider separate rules (e.g., 60/120 days).
                   </p>
                 </div>
               </label>
             </RadioGroup>
           </div>
+
+          {/* NEW: Repeat cadence for customer_inactive */}
+          {currentEvent === "customer_inactive" && (
+            <div className="grid gap-2 md:max-w-sm">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="cooldownDays">Repeat every (days)</Label>
+                <Hint text="After we send this rule to a customer, we’ll wait this many days before they can receive it again." />
+              </div>
+              <Input
+                id="cooldownDays"
+                type="number"
+                min={1}
+                step={1}
+                value={
+                  Number.isFinite(Number(w.cooldownDays)) && Number(w.cooldownDays) > 0
+                    ? String(w.cooldownDays)
+                    : "30"
+                }
+                onChange={(e) =>
+                  form.setValue(
+                    "cooldownDays",
+                    Math.max(1, Math.floor(Number(e.target.value || 1))),
+                    { shouldDirty: true }
+                  )
+                }
+                disabled={disabled}
+              />
+              <p className="text-xs text-muted-foreground">
+                Default is 30 days. The background sweep enforces this via a per-rule per-customer lock.
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Countries & Conditions */}
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Conditions</h2>
-            <Hint text="Extra filters the order/customer must pass. e.g. order total ≥ amount, contains a product, or no orders for N days." />
+            <Hint text="Extra filters the order/customer must pass." />
           </div>
 
           <OrgCountriesSelect value={w.countries} onChange={(codes) => form.setValue("countries", codes)} disabled={disabled} />
@@ -697,12 +745,12 @@ export default function RuleForm({
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Delivery</h2>
-            <Hint text="Where to send the message. Pick one or more channels." />
+            <Hint text="Pick one or more channels to send the message." />
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Channels</Label>
-              <Hint text="Email and/or Telegram. We’ll deliver the same message to each selected channel." />
+              <Hint text="Email and/or Telegram." />
             </div>
             <ChannelsPicker
               value={(w.channels as Channel[]) ?? []}
@@ -717,15 +765,13 @@ export default function RuleForm({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-semibold">Actions</h2>
-              <Hint text="What to include in the message. You can combine actions (e.g., send a coupon and recommend products) and use placeholders in one body." />
+              <Hint text="Combine coupon and/or product recommendations, then reference them in the message body." />
             </div>
             <Button type="button" onClick={addAction} disabled={disabled}>
               + Add action
             </Button>
           </div>
 
-          {/* In EDIT mode, do not inject a phantom default row.
-              In CREATE mode, defaultValues already include one. */}
           {actionFields.length === 0 && mode === "edit" && (
             <div className="text-sm text-muted-foreground">No actions in this rule yet. Add one above.</div>
           )}
@@ -738,7 +784,7 @@ export default function RuleForm({
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
                     <Label className="min-w-24">Type</Label>
-                    <Hint text="Choose the kind of content this action contributes: a coupon or a set of products." />
+                    <Hint text="Choose the kind of content this action contributes." />
                   </div>
                   <Select
                     value={(a as any).type ?? ""}
@@ -779,7 +825,7 @@ export default function RuleForm({
                   <div className="grid gap-4">
                     <div className="flex items-center gap-2">
                       <Label>Coupon</Label>
-                      <Hint text="Pick a coupon valid for the selected countries. In the message body, use {coupon} to show its code." />
+                      <Hint text="Pick a coupon valid for the rule’s countries. Use {coupon} in the body to show its code." />
                     </div>
                     <CouponSelect
                       value={((a as any).payload?.couponId ?? null) as any}
@@ -801,7 +847,7 @@ export default function RuleForm({
                   <div className="grid gap-4">
                     <div className="flex items-center gap-2">
                       <Label>Multiplier</Label>
-                      <Hint text="Sets a multiplier for the buyer’s spending-based points on this order only. If multiple rules set it, we’ll keep the highest multiplier." />
+                      <Hint text="Sets a multiplier on this order’s spending-based points. We keep the highest set by any rule." />
                     </div>
                     <div className="grid md:grid-cols-2 gap-4">
                       <Input
@@ -838,10 +884,6 @@ export default function RuleForm({
                         disabled={disabled}
                       />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Applies only to spending milestone points awarded at payment time. Buyer only; referrers are not
-                      affected.
-                    </p>
                   </div>
                 )}
 
@@ -849,7 +891,7 @@ export default function RuleForm({
                   <div className="grid gap-4">
                     <div className="flex items-center gap-2">
                       <Label>Points</Label>
-                      <Hint text="Immediately credits the buyer with a fixed number of affiliate points. Supports one decimal (e.g., 1.5). We round to the nearest 0.1." />
+                      <Hint text="Immediately credits the buyer with a fixed number of affiliate points (1 decimal allowed)." />
                     </div>
                     <div className="grid md:grid-cols-2 gap-4">
                       <Input
@@ -893,11 +935,11 @@ export default function RuleForm({
                   <div className="grid gap-4">
                     <div className="flex items-center gap-2">
                       <Label>Products to recommend</Label>
-                      <Hint text="Pick one or more products. In the message body, use {recommended_products} to render them as a list." />
+                      <Hint text="Use {recommended_products} in the body to render them as a list." />
                     </div>
                     <ProductMulti
                       label="Products to recommend"
-                      value={toArray<string>((a as any).payload?.productIds ?? [])}
+                      value={(Array.isArray((a as any).payload?.productIds) ? (a as any).payload.productIds : []) as string[]}
                       onChange={(ids) =>
                         updateAction(idx, {
                           payload: { ...(a as any).payload, productIds: ids },
@@ -906,10 +948,6 @@ export default function RuleForm({
                       disabled={disabled}
                       ruleCountries={w.countries}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Will populate <code>{`{recommended_products}`}</code> in
-                      the message body.
-                    </p>
                   </div>
                 )}
               </div>
@@ -921,13 +959,13 @@ export default function RuleForm({
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Message</h2>
-            <Hint text="One message for all selected actions. Use placeholders to pull in the coupon and/or products." />
+            <Hint text="One message for all selected actions. Placeholders: {coupon}, {recommended_products}." />
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Subject</Label>
-              <Hint text="Subject for email notifications. Telegram ignores this field." />
+              <Hint text="Subject for email notifications. Telegram ignores this." />
             </div>
             <Input
               value={w.templateSubject ?? ""}
@@ -939,7 +977,7 @@ export default function RuleForm({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Body (HTML)</Label>
-              <Hint text="Write your message with formatting. Helpful placeholders: {coupon}, {recommended_products}. We’ll render the products as a list." />
+              <Hint text="Write your message with formatting. Use placeholders where needed." />
             </div>
             <ReactQuill
               theme="snow"
