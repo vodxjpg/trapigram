@@ -1,700 +1,1145 @@
-"use client";
+"use client"
 
-import { useEffect, useMemo, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { PauseCircle, Check, X, RefreshCw, Info, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
+import { ProductGrid, type GridProduct } from "./product-grid"
+import { Cart } from "./cart"
+import { CategoryNav } from "./category-nav"
+import { CustomerSelector, type Customer } from "./customer-selector"
+import { CheckoutDialog } from "./checkout-dialog"
+import ReceiptOptionsDialog from "./receipt-options-dialog"
+import { Search, ShoppingCart } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { StoreRegisterSelector } from "./store-register-selector"
+import { toast } from "sonner"
+
 import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogContent,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog"
 
-type PaymentMethodRow = {
-  id: string;
-  name: string;
-  description?: string | null;
-  instructions?: string | null;
-};
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle
+} from "@/components/ui/sheet"
 
-type Payment = { methodId: string; amount: number };
-type DiscountPayload = { type: "fixed" | "percentage"; value: number };
-type NiftipayNet = { chain: string; asset: string; label: string };
+type Category = { id: string; name: string; parentId: string | null }
 
-type CheckoutDialogProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Parent client-side estimate (cart UI) – used only as a fallback */
-  totalEstimate: number;
-  cartId: string | null;
-  clientId: string | null;
-  registerId: string | null;
-  storeId: string | null;
-  onComplete: (orderId: string, parked?: boolean) => void;
-  /** Optional POS discount to apply as coupon "POS" */
-  discount?: DiscountPayload;
-};
-
-// Adjust if your app uses a different route
-const PAYMENT_METHODS_URL = "/payment-methods";
-
-function toMoney(n: number) {
-  return +n.toFixed(2);
+const LS_KEYS = {
+  STORE: "pos.storeId",
+  OUTLET: "pos.outletId",
+  CART: (outletId: string) => `pos.cartId.${outletId}`,
+  CLIENT: "pos.clientId",
 }
-const isStockError = (m?: string | null) =>
-  !!m && /insufficient stock|back-?orders?\s+are\s+disabled/i.test(m || "");
 
-export function CheckoutDialog(props: CheckoutDialogProps) {
-  const {
-    open,
-    onOpenChange,
-    totalEstimate,
-    cartId,
-    clientId,
-    registerId,
-    storeId,
-    onComplete,
-    discount,
-  } = props;
+// Coalesce bursts without adding perceived latency
+const BATCH_MS = 140
+// One passive reconcile after bursts
+const RECONCILE_MS = 300
 
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
-  const [methodsLoaded, setMethodsLoaded] = useState(false);
-  const [methodsReload, setMethodsReload] = useState(0);
-  const [currentMethodId, setCurrentMethodId] = useState<string | null>(null);
-
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [currentAmount, setCurrentAmount] = useState("");
-  const [cashReceived, setCashReceived] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // ── Server repriced subtotal (effectiveSubtotal) ──────────────────
-  const [effectiveSubtotal, setEffectiveSubtotal] = useState<number | null>(null);
-
-  // Niftipay network state
-  const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
-  const [niftipayLoading, setNiftipayLoading] = useState(false);
-  const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
-
-  const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments]);
-
-  // Compute the server-truth total we expect backend to accept
-  const serverTotal = useMemo(() => {
-    if (effectiveSubtotal == null) return null;
-    let d = 0;
-    if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-      if (discount.type === "percentage") {
-        const pct = Math.max(0, Math.min(100, discount.value));
-        d = +(effectiveSubtotal * (pct / 100)).toFixed(2);
-      } else {
-        d = +Math.min(effectiveSubtotal, Math.max(0, discount.value)).toFixed(2);
-      }
-    }
-    return toMoney(Math.max(0, effectiveSubtotal - d));
-  }, [effectiveSubtotal, discount]);
-
-  // Final total to display/use for validation (server if available, else fallback to client estimate)
-  const displayTotal = serverTotal ?? totalEstimate;
-  const remaining = Math.max(0, toMoney(displayTotal - totalPaid));
-
-  const currentIsCash = useMemo(() => {
-    const m = paymentMethods.find((pm) => pm.id === currentMethodId);
-    return (m?.name || "").toLowerCase().includes("cash");
-  }, [paymentMethods, currentMethodId]);
-
-  const change =
-    currentIsCash && cashReceived
-      ? Math.max(0, Number.parseFloat(cashReceived) - (Number.parseFloat(currentAmount || "0") || 0))
-      : 0;
-
-  // Reset lightweight state on close; keep loaded methods cached
+function useDebounced<T>(value: T, ms = 250) {
+  const [v, setV] = useState(value)
   useEffect(() => {
-    if (!open) {
-      setPayments([]);
-      setCurrentAmount("");
-      setCashReceived("");
-      setBusy(false);
-      setError(null);
-      setSelectedNiftipay("");
-      setEffectiveSubtotal(null);
-    }
-  }, [open]);
+    const t = setTimeout(() => setV(value), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+  return v
+}
 
-  async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
-    const r = await fetch("/api/niftipay/payment-methods");
-    if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
-    const { methods } = await r.json();
-    return (methods || []).map((m: any) => ({
-      chain: m.chain,
-      asset: m.asset,
-      label: m.label ?? `${m.asset} on ${m.chain}`,
-    }));
+type CartLine = {
+  productId: string
+  variationId: string | null
+  title: string
+  image: string | null
+  sku: string | null
+  quantity: number
+  unitPrice: number
+  subtotal: number
+}
+
+const isStockError = (msg?: string | null) =>
+  !!msg && /insufficient stock|back-?orders?\s+are\s+disabled/i.test(msg || "")
+
+export function POSInterface() {
+  // store/outlet
+  const [storeId, setStoreId] = useState<string | null>(null)
+  const [outletId, setOutletId] = useState<string | null>(null)
+
+  // store/org meta used to resolve country for carts
+  const [storeCountry, setStoreCountry] = useState<string | null>(null)
+  const [orgCountries, setOrgCountries] = useState<string[]>([])
+
+  // catalog
+  const [categories, setCategories] = useState<Category[]>([])
+  const [products, setProducts] = useState<GridProduct[]>([])
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+  const debouncedSearch = useDebounced(searchQuery, 200)
+
+  // cart
+  const [cartId, setCartId] = useState<string | null>(null)
+  const [lines, setLines] = useState<CartLine[]>([])
+  const linesRef = useRef<CartLine[]>([])
+  useEffect(() => { linesRef.current = lines }, [lines])
+
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const creatingCartRef = useRef(false)
+
+  // product-tile quick spinner (non-blocking)
+  const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set())
+
+  // cart line pending spinner keys (non-blocking for +/-)
+  const [pendingLineKeys, setPendingLineKeys] = useState<Set<string>>(new Set())
+
+  // mobile cart drawer
+  const [cartSheetOpen, setCartSheetOpen] = useState(false)
+
+  // POS discount (coupon "POS")
+  const [discountType, setDiscountType] = useState<"fixed" | "percentage">("fixed")
+  const [discountValue, setDiscountValue] = useState<string>("")
+
+  // post-checkout receipt dialog
+  const [receiptDlg, setReceiptDlg] = useState<{ orderId: string; email: string | null } | null>(null)
+
+  // ── Stale-response guard (strictly monotonic) ─────────────────────
+  const cartSeqRef = useRef(0)
+  const lastAppliedSeqRef = useRef(0)
+  const shouldApply = (seq: number) => seq > lastAppliedSeqRef.current
+  const markApplied = (seq: number) => { if (seq > lastAppliedSeqRef.current) lastAppliedSeqRef.current = seq }
+
+  // Key helpers
+  const keyOf = (x: { productId: string; variationId: string | null }) => `${x.productId}:${x.variationId ?? "base"}`
+  const keyFromIds = (productId: string, variationId: string | null) => `${productId}:${variationId ?? "base"}`
+  const parseKey = (key: string): { productId: string; variationId: string | null } => {
+    const [pid, v] = key.split(":")
+    return { productId: pid, variationId: v === "base" ? null : v }
   }
 
-  // Load active payment methods + effectiveSubtotal when dialog opens
+  // Reconcile debounce timer
+  const reconcileTimer = useRef<number | null>(null)
+  const scheduleReconcile = (cid: string) => {
+    if (reconcileTimer.current != null) return
+    reconcileTimer.current = window.setTimeout(() => {
+      reconcileTimer.current = null
+      void refreshCart(cid, ++cartSeqRef.current)
+    }, RECONCILE_MS)
+  }
+
+  // restore persisted choices
   useEffect(() => {
-    if (!open || !cartId) return;
-    let ignore = false;
-    (async () => {
-      setMethodsLoaded(false);
+    if (typeof window === "undefined") return
+    const s = localStorage.getItem(LS_KEYS.STORE)
+    const r = localStorage.getItem(LS_KEYS.OUTLET)
+    if (s) setStoreId(s)
+    if (r) setOutletId(r)
+  }, [])
+
+  // fetch org allowed countries (for fallback)
+  useEffect(() => {
+    let ignore = false
+    ;(async () => {
       try {
-        const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`);
-        const j = await res.json().catch(() => ({} as any));
-        if (!res.ok) throw new Error(j?.error || "Failed to load payment methods");
+        const res = await fetch("/api/organizations/countries", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+        })
+        if (!res.ok) return
+        const j = await res.json()
+        const list: string[] = Array.isArray(j.countries)
+          ? j.countries
+          : JSON.parse(j.countries || "[]")
+        if (!ignore) setOrgCountries(list)
+      } catch {/* ignore */ }
+    })()
+    return () => { ignore = true }
+  }, [])
 
-        const raw: any[] = j?.paymentMethods ?? j?.methods ?? j?.data ?? [];
-        const methods: PaymentMethodRow[] = raw
-          .map((m) => ({
-            id: String(m.id ?? m.methodId ?? m.key ?? ""),
-            name: String(m.name ?? m.title ?? "Method"),
-            description: m.description ?? null,
-            instructions: m.instructions ?? null,
-          }))
-          .filter((m) => m.id);
+  // load store meta
+  useEffect(() => {
+    if (!storeId) {
+      setStoreCountry(null)
+      return
+    }
+    let ignore = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/pos/stores/${storeId}`)
+        if (!res.ok) return
+        const j = await res.json()
+        const c = j.store?.address?.country ?? null
+        if (!ignore) setStoreCountry(c || null)
+      } catch {/* ignore */ }
+    })()
+    return () => { ignore = true }
+  }, [storeId])
 
-        // effectiveSubtotal
-        const eff = Number(j?.effectiveSubtotal);
-        setEffectiveSubtotal(Number.isFinite(eff) ? eff : null);
+  // Try restoring a previously selected customer by id
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const id = localStorage.getItem(LS_KEYS.CLIENT)
+    if (!id) return
+    let ignore = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/clients/${id}`)
+        if (ignore) return
+        if (res.ok) {
+          const j = await res.json()
+          const c = j.client ?? j
+          if (c?.id) {
+            setSelectedCustomer({
+              id: c.id,
+              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
+              email: c.email ?? null,
+              phone: c.phoneNumber ?? null,
+            })
+            return
+          }
+        }
+      } catch {/* ignore */ }
+    })()
+    return () => { ignore = true }
+  }, [])
 
-        if (!ignore) {
-          setPaymentMethods(methods);
-          setCurrentMethodId(methods[0]?.id ?? null);
+  // Reset cart whenever the selected customer changes
+  useEffect(() => {
+    if (!outletId) return
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(LS_KEYS.CART(outletId))
+    }
+    setCartId(null)
+    setLines([])
+  }, [selectedCustomer?.id])
+
+  // require store→outlet selection
+  const forceSelectDialog = !storeId || !outletId
+
+  // When outlet changes, persist choice and clear any cached cart id
+  useEffect(() => {
+    if (!outletId) {
+      setCartId(null)
+      setLines([])
+      return
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_KEYS.OUTLET, outletId)
+      localStorage.removeItem(LS_KEYS.CART(outletId))
+    }
+    setCartId(null)
+    setLines([])
+  }, [outletId])
+
+  // After outlet + store + customer are known → open a clean cart for Walk-in
+  useEffect(() => {
+    const openFreshCartIfNeeded = async () => {
+      if (!storeId || !outletId || !selectedCustomer?.id) return
+      try {
+        const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+        const body = {
+          clientId: selectedCustomer.id,
+          country: resolveCartCountry(),
+          storeId,
+          registerId: outletId,
+          resetIfWalkIn: true,
+        }
+        const res = await fetch("/api/pos/cart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(data?.error || "Failed to prepare cart")
+        }
+        const newCartId = data?.newCart?.id || data?.cart?.id || data?.id
+        if (!newCartId) throw new Error("No cart id returned")
+        setCartId(newCartId)
+        setLines([]) // start clean
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
         }
       } catch (e: any) {
-        if (!ignore) {
-          setPaymentMethods([]);
-          setEffectiveSubtotal(null);
-          setError(e?.message || "Failed to load payment methods");
-        }
-      } finally {
-        if (!ignore) setMethodsLoaded(true);
+        setError(e?.message || "Failed to prepare POS cart.")
       }
-    })();
-    return () => { ignore = true; };
-  }, [open, cartId, methodsReload]);
+    }
+    void openFreshCartIfNeeded()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeId, outletId, selectedCustomer?.id])
 
-  // When Niftipay is among methods, fetch its networks
+  // fetch categories
   useEffect(() => {
-    if (!open) return;
-    const hasNifti = paymentMethods.some((m) => /niftipay/i.test(m.name || ""));
-    if (!hasNifti) {
-      setNiftipayNetworks([]);
-      setSelectedNiftipay("");
-      return;
-    }
-    (async () => {
-      setNiftipayLoading(true);
+    let ignore = false
+    ;(async () => {
       try {
-        const nets = await fetchNiftipayNetworks();
-        setNiftipayNetworks(nets);
-        if (!selectedNiftipay && nets[0]) {
-          setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
+        const res = await fetch("/api/product-categories?all=1").then(r => r.json())
+        if (ignore) return
+        const cats: Category[] = (res.categories || []).map((c: any) => ({
+          id: String(c.id),
+          name: c.name,
+          parentId: c.parentId ? String(c.parentId) : null,
+        }))
+        setCategories(cats)
+      } catch { }
+    })()
+    return () => { ignore = true }
+  }, [])
+
+  // helper: normalize product category IDs to string[]
+  const normalizeCatIds = (p: any): string[] => {
+    const raw = p?.categoryIds ?? p?.categories ?? []
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((v: any) => {
+        if (v == null) return null
+        if (typeof v === "string" || typeof v === "number") return String(v)
+        if (typeof v === "object") return v.id ? String(v.id) : null
+        return null
+      })
+      .filter((x: any): x is string => !!x)
+  }
+
+  // Soft parse of stock/backorder fields from API without placeholders
+  const parseAllowBackorder = (v: any, manageStock: boolean): boolean => {
+    if (!manageStock) return true // unmanaged ⇒ effectively unlimited
+    if (typeof v === "boolean") return v
+    if (v == null) return false
+    const s = String(v).toLowerCase()
+    // Woocommerce: "no" | "notify" | "yes"
+    return s === "yes" || s === "notify" || s === "allowed" || s === "true" || s === "1"
+  }
+
+  // fetch products (flat variations) + stock
+  useEffect(() => {
+    let ignore = false
+    const params = new URLSearchParams({ pageSize: "200", page: "1" })
+    if (debouncedSearch) params.set("search", debouncedSearch)
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/products?${params}`).then(r => r.json())
+        if (ignore) return
+        const flat = (res.productsFlat || []).map((p: any) => {
+          const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
+
+          // Try common field variants
+          const manageStock =
+            !!(p.manageStock ?? p.manage_stock ?? p.stockManaged ?? p.stock_management ?? false)
+          const rawQty =
+            p.stockQuantity ?? p.stock_quantity ?? p.qty ?? p.stock ?? (manageStock ? 0 : null)
+
+          const stockQty = manageStock
+            ? (rawQty == null ? 0 : Number(rawQty) || 0)
+            : null // null === unlimited
+
+          const allowBackorder = parseAllowBackorder(
+            p.backorders ?? p.backorder ?? p.allowBackorders ?? p.backorder_allowed,
+            !!manageStock
+          )
+
+          return {
+            id: String(p.id),
+            productId: String(p.productId),
+            variationId: p.variationId ? String(p.variationId) : null,
+            title: p.title,
+            image: p.image ?? null,
+            categoryIds: normalizeCatIds(p),
+            priceForDisplay: Number(price) || 0,
+            stockQty,                 // number | null (null = unlimited)
+            allowBackorder,           // boolean (true when unmanaged or explicitly allowed)
+            manageStock: !!manageStock
+          } as GridProduct
+        })
+        setProducts(flat)
+      } catch {/* ignore */ }
+    })()
+    return () => { ignore = true }
+  }, [debouncedSearch])
+
+  // DEFAULT: ensure Walk-in exists & selected
+  useEffect(() => {
+    let ignore = false
+    const ensureWalkIn = async () => {
+      if (selectedCustomer) return
+      try {
+        const url = new URL("/api/clients", window.location.origin)
+        url.searchParams.set("page", "1")
+        url.searchParams.set("pageSize", "1")
+        url.searchParams.set("search", "Walk-in")
+        const res = await fetch(url.toString())
+        let picked: Customer | null = null
+        if (res.ok) {
+          const j = await res.json()
+          const c = (j.clients || [])[0]
+          if (c) {
+            picked = {
+              id: c.id,
+              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Walk-in",
+              email: c.email ?? null,
+              phone: c.phoneNumber ?? null,
+            }
+          }
         }
-      } catch {
-        setNiftipayNetworks([]);
-        setSelectedNiftipay("");
-      } finally {
-        setNiftipayLoading(false);
+        if (!picked) {
+          const r = await fetch("/api/clients", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: `walkin-${Date.now()}`,
+              firstName: "Walk-in",
+              lastName: "Customer",
+              email: null,
+              phoneNumber: null,
+              country: null,
+            }),
+          })
+          if (!r.ok) {
+            const e = await r.json().catch(() => ({}))
+            throw new Error(e?.error || "Failed to create walk-in client.")
+          }
+          const c = await r.json()
+          picked = { id: c.id, name: "Walk-in", email: null, phone: null }
+        }
+        if (!ignore && picked) {
+          setSelectedCustomer(picked)
+          if (typeof window !== "undefined") localStorage.setItem(LS_KEYS.CLIENT, picked.id)
+        }
+      } catch (e: any) {
+        if (!ignore) setError(e?.message || "Failed to prepare walk-in customer.")
       }
-    })();
-  }, [open, paymentMethods, selectedNiftipay]);
+    }
+    ensureWalkIn()
+    return () => { ignore = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomer])
 
-  const currentMethodIsNiftipay = useMemo(() => {
-    const m = paymentMethods.find((pm) => pm.id === currentMethodId);
-    return !!m && /niftipay/i.test(m.name || "");
-  }, [paymentMethods, currentMethodId]);
+  // Category helpers
+  const parentById = useMemo(() => {
+    const m = new Map<string, string | null>()
+    for (const c of categories) m.set(c.id, c.parentId ? String(c.parentId) : null)
+    return m
+  }, [categories])
 
-  const niftiInPayments = useMemo(() => {
-    return payments.some((p) => {
-      const name = paymentMethods.find((pm) => pm.id === p.methodId)?.name || "";
-      return /niftipay/i.test(name);
-    });
-  }, [payments, paymentMethods]);
+  const productMatchesCategory = (prodCatIds: string[], sel: string | null) => {
+    if (sel === null) return true
+    for (const cid of prodCatIds) {
+      let cur: string | null = cid
+      while (cur) {
+        if (cur === sel) return true
+        cur = parentById.get(cur) ?? null
+      }
+    }
+    return false
+  }
 
-  const niftiSelectionRequired =
-    niftiInPayments && niftipayNetworks.length > 0 && !selectedNiftipay;
+  const filteredProducts = useMemo(() => {
+    const q = debouncedSearch.toLowerCase()
+    return products.filter(p => {
+      const matchesCategory = productMatchesCategory(p.categoryIds, selectedCategoryId)
+      const matchesSearch = !q || p.title.toLowerCase().includes(q)
+      return matchesCategory && matchesSearch
+    })
+  }, [products, selectedCategoryId, debouncedSearch, parentById])
 
-  // Helpers
-  const openPaymentMethodsTab = () =>
-    window.open(PAYMENT_METHODS_URL, "_blank", "noopener,noreferrer");
-  const refreshMethods = () => setMethodsReload((n) => n + 1);
+  // totals (client-side estimate for cart UI)
+  const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
+  const discountAmount = useMemo(() => {
+    const v = Number(discountValue)
+    if (!Number.isFinite(v) || v <= 0) return 0
+    if (discountType === "percentage") {
+      const pct = Math.max(0, Math.min(100, v))
+      return +(subtotalEstimate * (pct / 100)).toFixed(2)
+    }
+    return +Math.min(subtotalEstimate, Math.max(0, v)).toFixed(2)
+  }, [discountType, discountValue, subtotalEstimate])
+  const totalEstimate = Math.max(0, +(subtotalEstimate - discountAmount).toFixed(2))
+  const itemCount = useMemo(() => lines.reduce((n, l) => n + (l.quantity || 0), 0), [lines])
 
-  const noPosMethods = methodsLoaded && paymentMethods.length === 0;
+  const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
-  /* ───────────────────────── Split helpers ───────────────────────── */
-  const handleAddPayment = () => {
-    const amount = Number.parseFloat(currentAmount);
-    if (!currentMethodId) return;
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    if (amount > remaining) return;
-    if (currentMethodIsNiftipay && niftipayNetworks.length > 0 && !selectedNiftipay) return;
+  const titleFor = useCallback((pid: string, vid: string | null, fallback: string) => {
+    const m = products.find(p => p.productId === pid && p.variationId === (vid ?? null));
+    return m?.title || fallback;
+  }, [products]);
 
-    setPayments((prev) => {
-      const idx = prev.findIndex((p) => p.methodId === currentMethodId);
+  const productKeyOf = (p: GridProduct) => `${p.productId}:${p.variationId ?? "base"}`
+  const lineKeyOf = (l: {productId: string; variationId: string | null}) => `${l.productId}:${l.variationId ?? "base"}`
+
+  /** Map server lines → UI lines */
+  const mapServerLines = useCallback((list: any[]) => {
+    return list.map((l) => ({
+      productId: l.id,
+      variationId: l.variationId ?? null,
+      title: titleFor(l.id, l.variationId ?? null, l.title),
+      image: l.image ?? null,
+      sku: l.sku ?? null,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.subtotal),
+    } as CartLine))
+  }, [titleFor])
+
+  const ensureCart = async (clientId: string) => {
+    if (cartId || creatingCartRef.current) return cartId
+    if (!storeId || !outletId) {
+      setError("Please select a store and outlet before adding items.")
+      return null
+    }
+    creatingCartRef.current = true
+    try {
+      const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+      const body = {
+        clientId,
+        country: resolveCartCountry(),
+        storeId,
+        registerId: outletId,
+      }
+      const res = await fetch("/api/pos/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}))
+        throw new Error(e?.error || "Failed to create cart")
+      }
+      const data = await res.json()
+      const newCartId = data?.newCart?.id || data?.cart?.id || data?.id
+      if (!newCartId) throw new Error("No cart id returned")
+      setCartId(newCartId)
+      if (outletId && typeof window !== "undefined") {
+        localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
+      }
+      return newCartId
+    } finally {
+      creatingCartRef.current = false
+    }
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+     OUTSTANDING OVERLAY
+  ───────────────────────────────────────────────────────────────── */
+
+  // Tile adds queue
+  type PendingAdd = { pending: number; inflightQty: number; inflight: boolean; flushTimer: number | null }
+  const addQueueRef = useRef<Map<string, PendingAdd>>(new Map())
+
+  // +/- queue
+  type LineDelta = { delta: number; inflightDelta: number; inflight: boolean; flushTimer: number | null }
+  const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
+
+  const outstandingForKey = (key: string) => {
+    const a = addQueueRef.current.get(key)
+    const l = lineQueueRef.current.get(key)
+    const addOut = (a?.pending ?? 0) + (a?.inflightQty ?? 0)
+    const lineOut = (l?.delta ?? 0) + (l?.inflightDelta ?? 0) // can be negative
+    return addOut + lineOut
+  }
+
+  const findMetaForKey = (key: string): { title: string; image: string | null; sku: string | null; unitPrice: number } => {
+    const prev = linesRef.current.find(l => keyOf(l) === key)
+    if (prev) {
+      return { title: prev.title, image: prev.image, sku: prev.sku, unitPrice: prev.unitPrice }
+    }
+    const { productId, variationId } = parseKey(key)
+    const p = products.find(x => x.productId === productId && x.variationId === variationId)
+    return {
+      title: p?.title ?? "Item",
+      image: p?.image ?? null,
+      sku: null,
+      unitPrice: Number(p?.priceForDisplay ?? 0),
+    }
+  }
+
+  // Merge server snapshot with outstanding client ops → render lines
+  const composeRenderLines = useCallback((serverList: any[]) => {
+    const serverLines = mapServerLines(serverList)
+    const result = new Map<string, CartLine>()
+    for (const sl of serverLines) {
+      const key = keyOf(sl)
+      const out = outstandingForKey(key)
+      const qty = Math.max(0, sl.quantity + out)
+      if (qty === 0) continue
+      const unit = Number(sl.unitPrice || 0)
+      result.set(key, {
+        ...sl,
+        quantity: qty,
+        subtotal: +(qty * unit).toFixed(2),
+      })
+    }
+    const addKeys = Array.from(addQueueRef.current.keys())
+    const lineKeys = Array.from(lineQueueRef.current.keys())
+    const candidateKeys = new Set<string>([...addKeys, ...lineKeys])
+    for (const key of candidateKeys) {
+      if (result.has(key)) continue
+      const out = outstandingForKey(key)
+      if (out > 0) {
+        const meta = findMetaForKey(key)
+        const qty = out
+        const unit = Number(meta.unitPrice || 0)
+        result.set(key, {
+          productId: parseKey(key).productId,
+          variationId: parseKey(key).variationId,
+          title: meta.title,
+          image: meta.image,
+          sku: meta.sku,
+          quantity: qty,
+          unitPrice: unit,
+          subtotal: +(qty * unit).toFixed(2),
+        })
+      }
+    }
+    return Array.from(result.values())
+  }, [mapServerLines, products])
+
+  const applyServerCart = useCallback((serverList: any[], seq: number) => {
+    if (!shouldApply(seq)) return
+    setLines(composeRenderLines(serverList))
+    markApplied(seq)
+  }, [composeRenderLines])
+
+  const refreshCart = async (cid: string, seqArg?: number) => {
+    const seq = seqArg ?? ++cartSeqRef.current
+    try {
+      const res = await fetch(`/api/cart/${cid}`)
+      if (!res.ok) return
+      const j = await res.json()
+      const list: any[] = j.lines || j.resultCartProducts || []
+      applyServerCart(list, seq)
+    } catch (e: any) {
+      setError(e?.message || "Failed to refresh cart.")
+    }
+  }
+
+  /* ────────────────────────── Optimistic helpers (local state) ────────────────────────── */
+
+  const upsertOptimistic = (p: GridProduct) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === p.productId && (l.variationId ?? null) === (p.variationId ?? null))
       if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = { ...next[idx], amount: toMoney(next[idx].amount + amount) };
-        return next;
+        const unitPrice = Number(prev[idx].unitPrice || p.priceForDisplay || 0)
+        const quantity = prev[idx].quantity + 1
+        const subtotal = +(quantity * unitPrice).toFixed(2)
+        const next = prev.slice()
+        next[idx] = { ...prev[idx], quantity, subtotal, unitPrice }
+        return next
       }
-      return [...prev, { methodId: currentMethodId, amount: toMoney(amount) }];
-    });
-    setCurrentAmount("");
-    setCashReceived("");
-  };
+      const unitPrice = Number(p.priceForDisplay || 0)
+      const line: CartLine = {
+        productId: p.productId,
+        variationId: p.variationId ?? null,
+        title: p.title,
+        image: p.image ?? null,
+        sku: null,
+        quantity: 1,
+        unitPrice,
+        subtotal: +unitPrice.toFixed(2),
+      }
+      return [line, ...prev]
+    })
+  }
 
-  const handleQuickAmount = (fraction: number) => {
-    const v = Math.max(0, remaining * fraction);
-    const s = v.toFixed(2);
-    setCurrentAmount(s);
-    if (currentIsCash) setCashReceived(s);
-  };
+  const optimisticInc = (line: CartLine) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
+      if (idx === -1) return prev
+      const unitPrice = Number(prev[idx].unitPrice)
+      const quantity = prev[idx].quantity + 1
+      const subtotal = +(quantity * unitPrice).toFixed(2)
+      const next = prev.slice()
+      next[idx] = { ...prev[idx], quantity, subtotal }
+      return next
+    })
+  }
 
-  const removePayment = (methodId: string) => {
-    setPayments((prev) => prev.filter((p) => p.methodId !== methodId));
-  };
+  const optimisticDec = (line: CartLine) => {
+    setLines(prev => {
+      const idx = prev.findIndex(l => l.productId === line.productId && (l.variationId ?? null) === (line.variationId ?? null))
+      if (idx === -1) return prev
+      const unitPrice = Number(prev[idx].unitPrice)
+      const quantity = Math.max(0, prev[idx].quantity - 1)
+      const subtotal = +(quantity * unitPrice).toFixed(2)
+      const next = prev.slice()
+      next[idx] = { ...prev[idx], quantity, subtotal }
+      return next
+    })
+  }
 
-  /* ───────────────────────── Submit actions ───────────────────────── */
+  /* ────────────────────────── Micro-batched queues ────────────────────────── */
 
-  const buildNiftipayIfAny = () => {
-    const niftiAmount = payments
-      .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
-      .reduce((s, p) => s + p.amount, 0);
+  const setPendingKey = (key: string, on: boolean) => {
+    setPendingLineKeys(prev => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
 
-    if (niftiAmount > 0 && selectedNiftipay) {
-      const [chain, asset] = selectedNiftipay.split(":");
-      return { chain, asset, amount: toMoney(niftiAmount) };
+  // Compute currently shown qty per key (includes optimistic overlay, because it comes from `lines`)
+  const shownQtyByKey = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const l of lines) m.set(keyOf(l), l.quantity)
+    return m
+  }, [lines])
+
+  const canAddKey = (key: string, prod?: GridProduct) => {
+    const p = prod ??
+      (() => {
+        const ids = parseKey(key)
+        return products.find(x => x.productId === ids.productId && x.variationId === ids.variationId) || null
+      })()
+    if (!p) return true
+    if (p.stockQty == null) return true // unlimited/unmanaged
+    const shown = shownQtyByKey.get(key) ?? 0
+    if (shown < p.stockQty) return true
+    return !!p.allowBackorder
+  }
+
+  const guardAddMessage = (p: GridProduct) => {
+    if (p.stockQty == null) return null
+    const key = productKeyOf(p)
+    const shown = shownQtyByKey.get(key) ?? 0
+    const remaining = Math.max(0, p.stockQty - shown)
+    if (remaining <= 0 && !p.allowBackorder) {
+      return `${p.title}: only ${p.stockQty} in stock (no back-orders).`
     }
-    return undefined;
-  };
+    return null
+  }
 
-  const submitParkedCheckout = async () => {
-    if (!cartId || !clientId || !registerId) {
-      setError("Missing cart, customer or outlet.");
-      return;
-    }
+  // ADD (from product tiles)
+  const scheduleAddFlush = (key: string, product: GridProduct) => {
+    const entry = addQueueRef.current.get(key)!
+    if (entry.flushTimer != null) return
+    entry.flushTimer = window.setTimeout(() => {
+      entry.flushTimer = null
+      void flushAddKey(key, product)
+    }, BATCH_MS)
+  }
+
+  const flushAddKey = async (key: string, p: GridProduct) => {
+    const entry = addQueueRef.current.get(key)
+    if (!entry || entry.inflight || entry.pending <= 0) return
+
+    entry.inflight = true
+    const qty = entry.pending
+    entry.pending = 0
+    entry.inflightQty = qty
+    const seq = ++cartSeqRef.current
+
     try {
-      setBusy(true);
-      const idem =
-        ((globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string;
+      const clientId = selectedCustomer?.id
+      if (!clientId) { setError("Pick or create a customer first (Walk-in is fine)."); entry.inflight = false; entry.inflightQty = 0; return }
+      const cid = (await ensureCart(clientId)) || cartId
+      if (!cid) { entry.inflight = false; entry.inflightQty = 0; return }
 
-      const payload: {
-        cartId: string;
-        payments: Payment[];
-        storeId: string | null;
-        registerId: string | null;
-        discount?: DiscountPayload;
-        parked: boolean;
-        niftipay?: { chain: string; asset: string; amount: number } | undefined;
-      } = {
-        cartId,
-        payments,
-        storeId,
-        registerId,
-        parked: true,
-      };
+      const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
 
-      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-        payload.discount = discount;
+      let ok = false
+      let linesPayload: any[] | null = null
+      let stockHit = false
+      try {
+        const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
+          body: JSON.stringify({
+            productId: p.productId,
+            variationId: p.variationId,
+            quantity: qty,
+          }),
+        })
+        const j = await res.json().catch(() => ({}))
+        ok = res.ok
+        if (!ok && isStockError(j?.error)) stockHit = true
+        if (ok && Array.isArray(j.lines)) linesPayload = j.lines
+        if (!ok && !stockHit) setError(j?.error || "Failed to add to cart")
+      } catch { ok = false }
+
+      if (!ok && !stockHit) {
+        // non-stock error already reported above; refresh to re-sync
+        entry.inflightQty = 0
+        if (cid) await refreshCart(cid, seq)
       }
 
-      const nifti = buildNiftipayIfAny();
-      if (nifti) (payload as any).niftipay = nifti;
+      // Reduce outstanding *before* composing to avoid double-count
+      entry.inflightQty = 0
+      if (linesPayload) applyServerCart(linesPayload, seq)
+      else if (cid) await refreshCart(cid, seq)
 
-      const res = await fetch("/api/pos/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Parking the order failed");
+      if (stockHit) {
+        const msg = guardAddMessage(p) || `${p.title}: insufficient stock.`
+        toast.error(msg)
+      }
 
-      const orderId = data?.order?.id || data?.orderId;
-      if (!orderId) throw new Error("No order id returned");
-      onComplete(orderId, true);
-      onOpenChange(false);
+      scheduleReconcile(cid!)
     } catch (e: any) {
-      const msg = e?.message || "Parking the order failed";
-      if (isStockError(msg)) {
-        toast.error("Insufficient stock for one or more items. Adjust quantities and try again.");
-      } else {
-        setError(msg);
-      }
+      setError(e?.message || "Failed to add to cart.")
+      entry.inflightQty = 0
+      if (cartId) await refreshCart(cartId, seq)
     } finally {
-      setBusy(false);
+      entry.inflight = false
+      if (entry.pending > 0) scheduleAddFlush(key, p)
     }
-  };
+  }
 
-  const submitCheckout = async () => {
-    if (!cartId || !clientId || !registerId) {
-      setError("Missing cart, customer or outlet.");
-      return;
-    }
-    if (remaining > 0) return;
+  // +/- (from cart lines)
+  const scheduleLineFlush = (key: string, payload: { productId: string; variationId: string | null }) => {
+    const entry = lineQueueRef.current.get(key)!
+    if (entry.flushTimer != null) return
+    entry.flushTimer = window.setTimeout(() => {
+      entry.flushTimer = null
+      void flushLineKey(key, payload)
+    }, BATCH_MS)
+  }
+
+  const flushLineKey = async (key: string, payload: { productId: string; variationId: string | null }) => {
+    const entry = lineQueueRef.current.get(key)
+    if (!entry || entry.inflight || entry.delta === 0) return
+
+    entry.inflight = true
+    const sent = entry.delta
+    entry.delta = 0
+    entry.inflightDelta += sent
+    const seq = ++cartSeqRef.current
+    setPendingKey(key, true)
 
     try {
-      setBusy(true);
-      const idem =
-        ((globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string;
+      const cid = cartId
+      if (!cid) { entry.inflight = false; entry.inflightDelta -= sent; setPendingKey(key, false); return }
 
-      const payload: {
-        cartId: string;
-        payments: Payment[];
-        storeId: string | null;
-        registerId: string | null;
-        discount?: DiscountPayload;
-        niftipay?: { chain: string; asset: string; amount: number } | undefined;
-      } = {
-        cartId,
-        payments,
-        storeId,
-        registerId,
-      };
+      const qtyAbs = Math.abs(sent)
+      const action = sent > 0 ? "add" : "subtract"
 
-      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-        payload.discount = discount;
+      let ok = false
+      let linesPayload: any[] | null = null
+      let stockHit = false
+
+      try {
+        const res = await fetch(`/api/pos/cart/${cid}/update-product`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productId: payload.productId,
+            variationId: payload.variationId,
+            action,
+            quantity: qtyAbs,
+          }),
+        })
+        const j = await res.json().catch(() => ({}))
+        ok = res.ok
+        if (!ok && action === "add" && isStockError(j?.error)) stockHit = true
+        if (ok && Array.isArray(j.lines)) linesPayload = j.lines
+        if (!ok && !stockHit) setError(j?.error || "Failed to update quantity")
+      } catch { ok = false }
+
+      entry.inflightDelta -= sent
+      if (linesPayload) applyServerCart(linesPayload, seq)
+      else await refreshCart(cid, seq)
+
+      if (stockHit) {
+        const ids = parseKey(key)
+        const prod = products.find(x => x.productId === ids.productId && x.variationId === ids.variationId)
+        const msg = (prod && guardAddMessage(prod)) || "Insufficient stock."
+        toast.error(msg)
       }
 
-      const nifti = buildNiftipayIfAny();
-      if (nifti) (payload as any).niftipay = nifti;
-
-      const res = await fetch("/api/pos/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Checkout failed");
-
-      const orderId = data?.order?.id || data?.orderId;
-      if (!orderId) throw new Error("No order id returned");
-      onComplete(orderId);
-      onOpenChange(false);
+      scheduleReconcile(cid)
     } catch (e: any) {
-      const msg = e?.message || "Checkout failed";
-      if (isStockError(msg)) {
-        toast.error("Insufficient stock for one or more items. Please adjust quantities.");
-      } else {
-        setError(msg);
-      }
+      setError(e?.message || "Failed to update quantity")
+      entry.inflightDelta -= sent
+      if (cartId) await refreshCart(cartId, seq)
     } finally {
-      setBusy(false);
+      entry.inflight = false
+      if (entry.delta !== 0) {
+        scheduleLineFlush(key, payload)
+      } else {
+        setPendingKey(key, false)
+      }
     }
-  };
+  }
 
-  const canPark = !!cartId && !!clientId && !!registerId && !busy; // parking allowed even with no methods
-  const canComplete = remaining === 0 && !busy && !niftiSelectionRequired;
+  /** ---------- Actions ---------- */
 
-  // Did the server subtotal differ from the client cart estimate? (purely informational)
-  const showedEstimateFromCart = serverTotal == null;
-  const mismatch =
-    !showedEstimateFromCart && Math.abs((serverTotal ?? 0) - totalEstimate) > 0.009;
+  const TILE_SPINNER_MS = 120 // small visual ping
+  const addToCart = async (p: GridProduct) => {
+    const key = productKeyOf(p)
+    // Hard gate before optimistic write
+    if (!canAddKey(key, p)) {
+      const msg = guardAddMessage(p) || `${p.title}: cannot add more.`
+      toast.error(msg)
+      return
+    }
 
-  const selectedMethod = paymentMethods.find((pm) => pm.id === currentMethodId) || null;
+    // instant optimistic
+    upsertOptimistic(p)
 
-  // UI gating while methods load
-  const inputsDisabled = !methodsLoaded || noPosMethods;
+    // tiny visual ping
+    setAddingKeys(prev => new Set(prev).add(key))
+    window.setTimeout(() => {
+      setAddingKeys(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }, TILE_SPINNER_MS)
 
-  // Local skeletons (no external deps)
-  const SkeletonBlock = ({ className = "" }: { className?: string }) => (
-    <div className={cn("animate-pulse rounded-md bg-muted/40", className)} />
-  );
+    // enqueue micro-batched network call
+    const map = addQueueRef.current
+    const entry = map.get(key) ?? { pending: 0, inflightQty: 0, inflight: false, flushTimer: null }
+    entry.pending += 1
+    map.set(key, entry)
+    scheduleAddFlush(key, p)
+  }
+
+  // spam-safe +
+  const inc = async (line: CartLine) => {
+    if (!cartId) return
+    const key = lineKeyOf(line)
+    const prod = products.find(p => p.productId === line.productId && (p.variationId ?? null) === (line.variationId ?? null))
+    if (!canAddKey(key, prod || undefined)) {
+      const msg = prod ? guardAddMessage(prod) : "Cannot add more."
+      toast.error(msg || "Cannot add more.")
+      return
+    }
+    optimisticInc(line)
+    const map = lineQueueRef.current
+    const entry = map.get(key) ?? { delta: 0, inflightDelta: 0, inflight: false, flushTimer: null }
+    entry.delta += 1
+    map.set(key, entry)
+    scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
+  }
+
+  // spam-safe −
+  const dec = async (line: CartLine) => {
+    if (!cartId) return
+    optimisticDec(line)
+    const key = lineKeyOf(line)
+    const map = lineQueueRef.current
+    const entry = map.get(key) ?? { delta: 0, inflightDelta: 0, inflight: false, flushTimer: null }
+    entry.delta -= 1
+    map.set(key, entry)
+    scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
+  }
+
+  // Remove → server wins
+  const withLinePending = async (line: CartLine, fn: () => Promise<void>) => {
+    const key = lineKeyOf(line)
+    if (pendingLineKeys.has(key)) return
+    setPendingKey(key, true)
+    try {
+      await fn()
+    } finally {
+      setPendingKey(key, false)
+    }
+  }
+
+  const removeLine = async (line: CartLine) => {
+    if (!cartId) return
+    optimisticDec({ ...line, quantity: 1, subtotal: line.unitPrice })
+    await withLinePending(line, async () => {
+      const seq = ++cartSeqRef.current
+      try {
+        const res = await fetch(`/api/pos/cart/${cartId}/remove-product`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productId: line.productId,
+            variationId: line.variationId,
+          }),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) { setError(j?.error || "Failed to remove item"); await refreshCart(cartId, seq); return }
+        if (Array.isArray(j.lines)) applyServerCart(j.lines, seq)
+        else await refreshCart(cartId, seq)
+        scheduleReconcile(cartId)
+      } catch (e: any) {
+        setError(e?.message || "Failed to remove item")
+        await refreshCart(cartId, seq)
+      }
+    })
+  }
+
+  const onCompleteCheckout = (orderId: string, parked?: boolean) => {
+    if (outletId && typeof window !== "undefined") {
+      localStorage.removeItem(LS_KEYS.CART(outletId))
+    }
+    setCartId(null)
+    setLines([])
+
+    if (!parked) {
+      setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
+    }
+  }
+
+  const setStoreOutlet = ({ storeId: s, outletId: o }: { storeId: string; outletId: string }) => {
+    setStoreId(s)
+    setOutletId(o)
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_KEYS.STORE, s)
+      localStorage.setItem(LS_KEYS.OUTLET, o)
+    }
+  }
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Checkout</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {/* Totals (server truth if available) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-lg">
-                <span className="font-medium">
-                  {showedEstimateFromCart ? "Estimated Total" : "Total (repriced)"}
-                </span>
-                <span className="font-bold text-primary">${displayTotal.toFixed(2)}</span>
-              </div>
-              {mismatch && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" />
-                  Prices updated by quantity/tier rules.
-                </div>
-              )}
-              {payments.length > 0 && (
-                <>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Paid</span>
-                    <span className="text-accent">${totalPaid.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-lg">
-                    <span className="font-medium">Remaining</span>
-                    <span className="font-bold">${remaining.toFixed(2)}</span>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Payment methods (skeleton → grid) */}
-            <div className="space-y-2">
-              <Label>Payment Method</Label>
-
-              {!methodsLoaded ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <SkeletonBlock className="h-20" />
-                  <SkeletonBlock className="h-20" />
-                  <SkeletonBlock className="h-20" />
-                  <SkeletonBlock className="h-20" />
-                </div>
-              ) : noPosMethods ? (
-                <div className="rounded-md border p-4 bg-muted/30">
-                  <p className="text-sm">
-                    You don’t have any <strong>POS payment methods</strong> enabled. Create one to accept payments here.
-                  </p>
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button onClick={openPaymentMethodsTab}>
-                      Open Payment Methods (new tab)
-                    </Button>
-                    <Button variant="outline" onClick={refreshMethods}>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Refresh
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {paymentMethods.map((m) => (
-                    <Card
-                      key={m.id}
-                      className={cn(
-                        "p-4 cursor-pointer transition-all hover:border-primary",
-                        currentMethodId === m.id && "border-primary bg-primary/5",
-                      )}
-                      onClick={() => setCurrentMethodId(m.id)}
-                    >
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="font-medium">{m.name}</span>
-                        {m.description && (
-                          <span className="text-xs text-muted-foreground">{m.description}</span>
-                        )}
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Niftipay network picker */}
-            {methodsLoaded && !noPosMethods && currentMethodIsNiftipay && (
-              <div className="space-y-2">
-                <Label>Crypto Network</Label>
-                {niftipayLoading ? (
-                  <SkeletonBlock className="h-10" />
-                ) : (
-                  <div>
-                    <select
-                      className="w-full border rounded-md px-3 h-10 bg-background"
-                      value={selectedNiftipay}
-                      onChange={(e) => setSelectedNiftipay(e.target.value)}
-                      disabled={niftipayNetworks.length === 0}
-                    >
-                      {!selectedNiftipay && <option value="">{niftipayNetworks.length ? "Select network" : "No networks available"}</option>}
-                      {niftipayNetworks.map((n) => (
-                        <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
-                          {n.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Amount + helpers */}
-            {methodsLoaded && !noPosMethods && remaining > 0 && (
-              <>
-                <div className="space-y-2">
-                  <Label>Amount</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={remaining}
-                    value={currentAmount}
-                    onChange={(e) => setCurrentAmount(e.target.value)}
-                    placeholder="0.00"
-                    disabled={inputsDisabled}
-                  />
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)} disabled={inputsDisabled}>25%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)} disabled={inputsDisabled}>50%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)} disabled={inputsDisabled}>75%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)} disabled={inputsDisabled}>Full</Button>
-                  </div>
-                </div>
-
-                {currentIsCash && (
-                  <div className="space-y-2">
-                    <Label>Cash Received</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={cashReceived}
-                      onChange={(e) => setCashReceived(e.target.value)}
-                      placeholder={currentAmount || "0.00"}
-                      disabled={inputsDisabled}
-                    />
-                    {Number.isFinite(change) && change > 0 && (
-                      <p className="text-sm">
-                        Change:{" "}
-                        <span className="font-bold text-accent">${toMoney(change).toFixed(2)}</span>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <Button
-                  className="w-full"
-                  onClick={handleAddPayment}
-                  disabled={
-                    inputsDisabled ||
-                    !currentAmount ||
-                    !currentMethodId ||
-                    Number.parseFloat(currentAmount) <= 0 ||
-                    Number.parseFloat(currentAmount) > remaining ||
-                    (currentMethodIsNiftipay && niftipayNetworks.length > 0 && !selectedNiftipay)
-                  }
-                >
-                  Add Payment
-                </Button>
-              </>
-            )}
-
-            {/* Split list */}
-            {payments.length > 0 && (
-              <div className="space-y-2">
-                {payments.map((p) => {
-                  const methodName =
-                    paymentMethods.find((pm) => pm.id === p.methodId)?.name ?? p.methodId;
-                  return (
-                    <Card key={p.methodId} className="p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium">{methodName}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium tabular-nums">${p.amount.toFixed(2)}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => removePayment(p.methodId)}
-                            aria-label={`Remove ${methodName}`}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Current method instructions (if any) */}
-            {!!selectedMethod?.instructions && methodsLoaded && !noPosMethods && (
-              <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-                <div className="flex items-start gap-2">
-                  <Info className="mt-0.5 h-4 w-4" />
-                  <div>{selectedMethod.instructions}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-2">
-              {payments.length > 0 && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setPayments([]);
-                    setCurrentAmount("");
-                    setCashReceived("");
-                  }}
-                  disabled={busy}
-                  className="w-full sm:w-auto"
-                >
-                  Reset
-                </Button>
-              )}
-
-              {/* Park order (allowed even with no methods) */}
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      aria-label="Park order (save with remaining balance)"
-                      variant="outline"
-                      className={cn(
-                        "w-full sm:flex-1 border-amber-500 text-amber-700 hover:bg-amber-50",
-                        "dark:border-amber-400 dark:text-amber-300 dark:hover:bg-amber-950",
-                      )}
-                      onClick={submitParkedCheckout}
-                      disabled={!canPark || niftiSelectionRequired}
-                    >
-                      <PauseCircle className="h-4 w-4" />
-                      Park Order
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="start" className="max-w-xs">
-                    Save this sale as <b>Pending Payment</b>. Partial payments are recorded and the
-                    remaining balance stays due.
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-
-              {/* Complete */}
-              <Button className="w-full sm:flex-1" onClick={submitCheckout} disabled={!canComplete}>
-                {busy ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="ml-2">Completing…</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-4 w-4" />
-                    <span className="ml-2">Complete Transaction</span>
-                  </>
-                )}
-              </Button>
+      <div className="flex h-screen flex-col bg-background">
+        {/* Header */}
+        <header className="flex items-center justify-between border-b bg-card px-6 py-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-foreground">POS</h1>
+            <div className="relative w-full max-w-xs md:w-80">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search products..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+
+          <div className="flex items-center gap-2">
+            <StoreRegisterSelector
+              storeId={storeId}
+              outletId={outletId}
+              onChange={setStoreOutlet}
+              forceOpen={forceSelectDialog}
+            />
+            <CustomerSelector
+              selectedCustomer={selectedCustomer}
+              onSelectCustomer={(c) => {
+                setSelectedCustomer(c)
+                if (typeof window !== "undefined") {
+                  if (c?.id) localStorage.setItem(LS_KEYS.CLIENT, c.id)
+                  else localStorage.removeItem(LS_KEYS.CLIENT)
+                }
+              }}
+            />
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+          {/* Products */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <CategoryNav
+              categories={categories.map(c => ({ id: c.id, name: c.name }))}
+              selectedCategoryId={selectedCategoryId}
+              onSelect={setSelectedCategoryId}
+            />
+            <ProductGrid
+              products={filteredProducts}
+              onAddToCart={addToCart}
+              addingKeys={addingKeys}
+              shownQtyByKey={shownQtyByKey}
+            />
+          </div>
+
+        {/* Cart sidebar (desktop / landscape) */}
+          <div className="hidden lg:flex">
+            <Cart
+              variant="inline"
+              lines={lines}
+              onInc={inc}
+              onDec={dec}
+              onRemove={removeLine}
+              onCheckout={() => setCheckoutOpen(true)}
+              discountType={discountType}
+              discountValue={discountValue}
+              onDiscountType={setDiscountType}
+              onDiscountValue={(val) => {
+                const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
+                setDiscountValue(sanitized)
+              }}
+              subtotal={subtotalEstimate}
+              discountAmount={discountAmount}
+              total={totalEstimate}
+              pendingKeys={pendingLineKeys}
+            />
+          </div>
+        </div>
+
+        {/* Mobile bottom bar → opens cart drawer */}
+        <div className="lg:hidden sticky bottom-0 inset-x-0 border-t bg-card p-3">
+          <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
+            <button
+              className="flex w-full items-center justify-between rounded-md bg-primary px-4 py-3 text-primary-foreground"
+              onClick={() => setCartSheetOpen(true)}
+            >
+              <span className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4" />
+                Cart • {itemCount}
+              </span>
+              <span>${totalEstimate.toFixed(2)}</span>
+            </button>
+            <SheetContent side="bottom" className="h-[85vh] p-0 rounded-t-2xl">
+              <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-muted" />
+              <SheetHeader className="sr-only">
+                <SheetTitle>Cart</SheetTitle>
+              </SheetHeader>
+
+              <div className="flex h-[calc(85vh-0.75rem)] flex-col">
+                <Cart
+                  variant="sheet"
+                  lines={lines}
+                  onInc={inc}
+                  onDec={dec}
+                  onRemove={removeLine}
+                  onCheckout={() => {
+                    setCartSheetOpen(false)
+                    setCheckoutOpen(true)
+                  }}
+                  discountType={discountType}
+                  discountValue={discountValue}
+                  onDiscountType={setDiscountType}
+                  onDiscountValue={(val) => {
+                    const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
+                    setDiscountValue(sanitized)
+                  }}
+                  subtotal={subtotalEstimate}
+                  discountAmount={discountAmount}
+                  total={totalEstimate}
+                  pendingKeys={pendingLineKeys}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {/* Checkout Dialog */}
+        <CheckoutDialog
+          open={checkoutOpen}
+          onOpenChange={setCheckoutOpen}
+          totalEstimate={totalEstimate}
+          cartId={cartId}
+          clientId={selectedCustomer?.id ?? null}
+          registerId={outletId}
+          storeId={storeId}
+          onComplete={onCompleteCheckout}
+          discount={{
+            type: discountType,
+            value: Number(discountValue || 0)
+          }}
+        />
+      </div>
+
+      {/* Post-checkout: receipt options */}
+      <ReceiptOptionsDialog
+        open={!!receiptDlg}
+        onOpenChange={(o) => !o && setReceiptDlg(null)}
+        orderId={receiptDlg?.orderId ?? null}
+        defaultEmail={receiptDlg?.email ?? ""}
+      />
 
       {/* Error dialog */}
       <AlertDialog open={!!error} onOpenChange={(o) => !o && setError(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Checkout error</AlertDialogTitle>
+            <AlertDialogTitle>Something went wrong</AlertDialogTitle>
           </AlertDialogHeader>
           <div className="text-sm text-muted-foreground">{error}</div>
           <AlertDialogFooter>
@@ -703,5 +1148,5 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
+  )
 }

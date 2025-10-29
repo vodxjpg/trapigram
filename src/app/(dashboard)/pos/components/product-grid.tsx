@@ -2,8 +2,9 @@
 
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Loader2 } from "lucide-react"
+import { Plus, Loader2, CheckCircle2, AlertTriangle, Ban } from "lucide-react"
 import Image from "next/image"
+import { cn } from "@/lib/utils"
 
 export type GridProduct = {
   id: string
@@ -13,6 +14,10 @@ export type GridProduct = {
   image: string | null
   categoryIds: string[]
   priceForDisplay: number
+  /** Inventory */
+  stockQty: number | null          // null = unlimited / unmanaged
+  allowBackorder: boolean
+  manageStock: boolean
 }
 
 type ProductGridProps = {
@@ -20,6 +25,8 @@ type ProductGridProps = {
   onAddToCart: (p: GridProduct) => void
   /** Tiles briefly show this spinner after optimistic add (non-blocking) */
   addingKeys?: Set<string>
+  /** Current shown quantities per key (already includes optimistic overlay) */
+  shownQtyByKey: Map<string, number>
 }
 
 function InitialsCircle({ text }: { text: string }) {
@@ -37,23 +44,37 @@ function InitialsCircle({ text }: { text: string }) {
   )
 }
 
-export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridProps) {
+const keyOf = (p: GridProduct) => `${p.productId}:${p.variationId ?? "base"}`
+const remainingFor = (p: GridProduct, shown: number) => {
+  if (p.stockQty == null) return Infinity
+  return Math.max(0, p.stockQty - shown)
+}
+
+export function ProductGrid({ products, onAddToCart, addingKeys, shownQtyByKey }: ProductGridProps) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {products.map((product) => {
-          const key = `${product.productId}:${product.variationId ?? "base"}`
+          const key = keyOf(product)
           const isLoading = addingKeys?.has(key) ?? false
+          const shown = shownQtyByKey.get(key) ?? 0
+          const remain = remainingFor(product, shown)
+          const oos = remain === 0 && product.stockQty !== null
+          const canBackorder = product.allowBackorder && product.stockQty !== null && remain === 0
 
           return (
             <Card
               key={key}
-              className="group relative cursor-pointer overflow-hidden transition-all hover:shadow-lg"
+              className={cn(
+                "group relative overflow-hidden transition-all",
+                oos && !product.allowBackorder ? "opacity-60" : "cursor-pointer hover:shadow-lg"
+              )}
               onClick={() => {
-                // Always allow clicks — queue coalesces network work
+                if (oos && !product.allowBackorder) return
                 onAddToCart(product)
               }}
               aria-busy={isLoading}
+              aria-disabled={oos && !product.allowBackorder}
             >
               <div className="relative aspect-square bg-muted">
                 {product.image ? (
@@ -68,13 +89,17 @@ export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridPr
                   <InitialsCircle text={product.title} />
                 )}
 
-                {/* Hover CTA (still works while spinner pings) */}
+                {/* Hover CTA */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all group-hover:bg-black/10">
                   <Button
                     size="icon"
-                    className="scale-0 transition-transform group-hover:scale-100"
+                    className={cn(
+                      "scale-0 transition-transform group-hover:scale-100",
+                      oos && !product.allowBackorder && "pointer-events-none opacity-0"
+                    )}
                     onClick={(e) => {
                       e.stopPropagation()
+                      if (oos && !product.allowBackorder) return
                       onAddToCart(product)
                     }}
                   >
@@ -82,7 +107,7 @@ export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridPr
                   </Button>
                 </div>
 
-                {/* Quick spinner overlay — non-blocking (pointer-events: none) */}
+                {/* Quick spinner overlay — non-blocking */}
                 {isLoading && (
                   <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/30">
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
@@ -90,11 +115,56 @@ export function ProductGrid({ products, onAddToCart, addingKeys }: ProductGridPr
                 )}
               </div>
 
-              <div className="p-3">
+              <div className="p-3 space-y-1.5">
                 <h3 className="font-medium text-foreground line-clamp-2">{product.title}</h3>
-                <p className="mt-1 text-lg font-bold text-primary">
+                <p className="text-lg font-bold text-primary">
                   ${product.priceForDisplay.toFixed(2)}
                 </p>
+
+                {/* Stock + backorder badge (optimistic) */}
+                <div className="mt-1 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5">
+                    {product.stockQty == null ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span>In stock</span>
+                      </>
+                    ) : oos ? (
+                      product.allowBackorder ? (
+                        <>
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>Back-order</span>
+                        </>
+                      ) : (
+                        <>
+                          <Ban className="h-3.5 w-3.5" />
+                          <span>Out of stock</span>
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span>{remain} left</span>
+                      </>
+                    )}
+                  </div>
+
+                  {product.manageStock && (
+                    <span className={cn(
+                      "rounded px-1.5 py-0.5",
+                      product.stockQty == null ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                      : remain === 0
+                        ? (product.allowBackorder
+                            ? "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                            : "bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300")
+                        : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                    )}>
+                      {product.stockQty == null
+                        ? "∞"
+                        : remain}
+                    </span>
+                  )}
+                </div>
               </div>
             </Card>
           )
