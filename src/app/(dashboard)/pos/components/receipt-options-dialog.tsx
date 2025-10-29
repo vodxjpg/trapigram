@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/receipt-options-dialog.tsx
 "use client";
 
 import * as React from "react";
@@ -130,6 +131,12 @@ export default function ReceiptOptionsDialog({
     <div className={cn("animate-pulse rounded-md bg-muted/40", className)} />
   );
 
+  /** NEW: As soon as the dialog opens with an orderId, show the skeleton immediately.
+   * This prevents the initial flash of the receipt UI before we decide if QR is needed. */
+  useEffect(() => {
+    if (open && orderId) setQrPending(true);
+  }, [open, orderId]);
+
   // 1) Fetch order (plural → singular fallback)
   useEffect(() => {
     let ignore = false;
@@ -163,6 +170,8 @@ export default function ReceiptOptionsDialog({
         if (!ignore) {
           setRaw(null);
           setOrder(null);
+          // If we cannot load the order, stop pending so user can still print/email if needed
+          setQrPending(false);
         }
       }
     })();
@@ -227,7 +236,7 @@ export default function ReceiptOptionsDialog({
         const niftiSplits = splits.filter((s) => looksNiftipayName(s.name));
         const needsNifti = niftiSplits.length > 0;
 
-        // Start pending if we expect a Niftipay QR for this receipt
+        // Keep pending while we decide/do work
         setQrPending(needsNifti);
 
         if (!needsNifti) return; // nothing to do in this receipt
@@ -470,7 +479,7 @@ export default function ReceiptOptionsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" aria-busy={shouldHoldForQR}>
         <DialogHeader>
           <DialogTitle>Receipt options</DialogTitle>
         </DialogHeader>
@@ -478,7 +487,7 @@ export default function ReceiptOptionsDialog({
         <div className="space-y-4">
           {/* If QR is expected but not ready → skeleton, no form */}
           {shouldHoldForQR ? (
-            <div className="space-y-3">
+            <div className="space-y-3" data-state="preparing-crypto">
               <Card className="p-3">
                 <div className="space-y-2">
                   <div className="text-sm font-medium">Preparing crypto payment…</div>
