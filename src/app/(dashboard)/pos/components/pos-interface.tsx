@@ -36,6 +36,9 @@ const LS_KEYS = {
   CLIENT: "pos.clientId",
 }
 
+// NEW: small batch delay to coalesce spammy clicks safely
+const BATCH_MS = 120
+
 function useDebounced<T>(value: T, ms = 250) {
   const [v, setV] = useState(value)
   useEffect(() => {
@@ -98,6 +101,12 @@ export function POSInterface() {
 
   // post-checkout receipt dialog
   const [receiptDlg, setReceiptDlg] = useState<{ orderId: string; email: string | null } | null>(null)
+
+  // ── NEW: stale-response guard (cart-wide monotonic seq) ───────────
+  const cartSeqRef = useRef(0)
+  const lastAppliedSeqRef = useRef(0)
+  const shouldApply = (seq: number) => seq >= lastAppliedSeqRef.current
+  const markApplied = (seq: number) => { if (seq > lastAppliedSeqRef.current) lastAppliedSeqRef.current = seq }
 
   // restore persisted choices
   useEffect(() => {
@@ -459,13 +468,20 @@ export function POSInterface() {
     }
   }
 
-  const refreshCart = async (cid: string) => {
+  const applyServerCart = useCallback((list: any[], seq: number) => {
+    if (!shouldApply(seq)) return
+    setLines(mapServerLines(list))
+    markApplied(seq)
+  }, [mapServerLines])
+
+  const refreshCart = async (cid: string, seqArg?: number) => {
+    const seq = seqArg ?? ++cartSeqRef.current
     try {
       const res = await fetch(`/api/cart/${cid}`)
       if (!res.ok) return
       const j = await res.json()
       const list: any[] = j.lines || j.resultCartProducts || []
-      setLines(mapServerLines(list))
+      applyServerCart(list, seq)
     } catch (e: any) {
       setError(e?.message || "Failed to refresh cart.")
     }
@@ -543,10 +559,11 @@ export function POSInterface() {
   const scheduleAddFlush = (key: string, product: GridProduct) => {
     const entry = addQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
+    // NEW: batch for a short window to avoid request races
     entry.flushTimer = window.setTimeout(() => {
       entry.flushTimer = null
       void flushAddKey(key, product)
-    }, 0)
+    }, BATCH_MS)
   }
 
   const flushAddKey = async (key: string, p: GridProduct) => {
@@ -556,6 +573,7 @@ export function POSInterface() {
     entry.inflight = true
     const qty = entry.pending
     entry.pending = 0
+    const seq = ++cartSeqRef.current
 
     try {
       const clientId = selectedCustomer?.id
@@ -565,7 +583,6 @@ export function POSInterface() {
 
       const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
 
-      // Try coalesced quantity call
       let ok = false
       let linesPayload: any[] | null = null
       try {
@@ -597,7 +614,7 @@ export function POSInterface() {
           if (!res2.ok) {
             const errPayload = await res2.json().catch(() => ({}))
             setError(errPayload?.error || "Failed to add to cart")
-            await refreshCart(cid)
+            await refreshCart(cid, seq)
             break
           }
           const j2 = await res2.json().catch(() => ({}))
@@ -605,18 +622,18 @@ export function POSInterface() {
         }
       }
 
-      if (linesPayload) setLines(mapServerLines(linesPayload))
-      else await refreshCart(cid)
+      if (linesPayload) applyServerCart(linesPayload, seq)
+      else await refreshCart(cid!, seq)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
-      if (cartId) await refreshCart(cartId)
+      if (cartId) await refreshCart(cartId, seq)
     } finally {
       entry.inflight = false
       if (entry.pending > 0) scheduleAddFlush(key, p)
     }
   }
 
-  /** ---------- NEW: Micro-batched +/- queue per cart line ---------- */
+  /** ---------- Micro-batched +/- queue per cart line ---------- */
 
   type LineDelta = { delta: number; inflight: boolean; flushTimer: number | null }
   const lineQueueRef = useRef<Map<string, LineDelta>>(new Map())
@@ -633,11 +650,11 @@ export function POSInterface() {
   const scheduleLineFlush = (key: string, payload: { productId: string; variationId: string | null }) => {
     const entry = lineQueueRef.current.get(key)!
     if (entry.flushTimer != null) return
-    // micro-batch next tick
+    // NEW: batch for a short window to avoid request races
     entry.flushTimer = window.setTimeout(() => {
       entry.flushTimer = null
       void flushLineKey(key, payload)
-    }, 0)
+    }, BATCH_MS)
   }
 
   const flushLineKey = async (key: string, payload: { productId: string; variationId: string | null }) => {
@@ -647,6 +664,7 @@ export function POSInterface() {
     entry.inflight = true
     const deltaNow = entry.delta
     entry.delta = 0
+    const seq = ++cartSeqRef.current
     setPendingKey(key, true)
 
     try {
@@ -668,7 +686,7 @@ export function POSInterface() {
             productId: payload.productId,
             variationId: payload.variationId,
             action,
-            quantity: qtyAbs,            // <-- if supported, one call
+            quantity: qtyAbs,
           }),
         })
         const j = await res.json().catch(() => ({}))
@@ -691,7 +709,7 @@ export function POSInterface() {
           if (!res2.ok) {
             const j2e = await res2.json().catch(() => ({}))
             setError(j2e?.error || "Failed to update quantity")
-            await refreshCart(cid)
+            await refreshCart(cid, seq)
             break
           }
           const j2 = await res2.json().catch(() => ({}))
@@ -699,16 +717,15 @@ export function POSInterface() {
         }
       }
 
-      if (linesPayload) setLines(mapServerLines(linesPayload))
-      else await refreshCart(cid)
+      if (linesPayload) applyServerCart(linesPayload, seq)
+      else await refreshCart(cid, seq)
     } catch (e: any) {
       setError(e?.message || "Failed to update quantity")
-      if (cartId) await refreshCart(cartId)
+      if (cartId) await refreshCart(cartId, seq)
     } finally {
       entry.inflight = false
-      // keep spinner if more clicks landed
       if (entry.delta !== 0) {
-        scheduleLineFlush(key, payload)
+        scheduleLineFlush(key, payload) // more clicks landed while inflight
       } else {
         setPendingKey(key, false)
       }
@@ -741,7 +758,6 @@ export function POSInterface() {
     scheduleAddFlush(key, p)
   }
 
-  // NEW: spam-safe +
   const inc = async (line: CartLine) => {
     if (!cartId) return
     optimisticInc(line)
@@ -753,7 +769,6 @@ export function POSInterface() {
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
-  // NEW: spam-safe −
   const dec = async (line: CartLine) => {
     if (!cartId) return
     optimisticDec(line)
@@ -781,6 +796,7 @@ export function POSInterface() {
     if (!cartId) return
     optimisticRemove(line)
     await withLinePending(line, async () => {
+      const seq = ++cartSeqRef.current
       try {
         const res = await fetch(`/api/pos/cart/${cartId}/remove-product`, {
           method: "POST",
@@ -791,11 +807,12 @@ export function POSInterface() {
           }),
         })
         const j = await res.json().catch(() => ({}))
-        if (!res.ok) { setError(j?.error || "Failed to remove item"); await refreshCart(cartId); return }
-        if (Array.isArray(j.lines)) setLines(mapServerLines(j.lines))
+        if (!res.ok) { setError(j?.error || "Failed to remove item"); await refreshCart(cartId, seq); return }
+        if (Array.isArray(j.lines)) applyServerCart(j.lines, seq)
+        else await refreshCart(cartId, seq)
       } catch (e: any) {
         setError(e?.message || "Failed to remove item")
-        await refreshCart(cartId)
+        await refreshCart(cartId, seq)
       }
     })
   }
