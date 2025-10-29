@@ -490,7 +490,6 @@ export function POSInterface() {
 
   /* ────────────────────────────────────────────────────────────────
      OUTSTANDING OVERLAY: never render less than (server + queued)
-     We track pending + in-flight per key for both “tile adds” and “line +/-”.
   ───────────────────────────────────────────────────────────────── */
 
   // Tile adds queue
@@ -524,11 +523,9 @@ export function POSInterface() {
     }
   }
 
-  // Merge server snapshot with outstanding client ops → render lines
   const composeRenderLines = useCallback((serverList: any[]) => {
     const serverLines = mapServerLines(serverList)
     const result = new Map<string, CartLine>()
-    // 1) Start with all server lines, overlay outstanding
     for (const sl of serverLines) {
       const key = keyOf(sl)
       const out = outstandingForKey(key)
@@ -541,7 +538,6 @@ export function POSInterface() {
         subtotal: +(qty * unit).toFixed(2),
       })
     }
-    // 2) For keys absent on server but with positive outstanding → render virtual lines
     const addKeys = Array.from(addQueueRef.current.keys())
     const lineKeys = Array.from(lineQueueRef.current.keys())
     const candidateKeys = new Set<string>([...addKeys, ...lineKeys])
@@ -567,7 +563,6 @@ export function POSInterface() {
     return Array.from(result.values())
   }, [mapServerLines, products])
 
-  // Apply server cart (monotonic + overlay)
   const applyServerCart = useCallback((serverList: any[], seq: number) => {
     if (!shouldApply(seq)) return
     setLines(composeRenderLines(serverList))
@@ -587,7 +582,7 @@ export function POSInterface() {
     }
   }
 
-  /* ────────────────────────── Optimistic helpers (local state) ────────────────────────── */
+  /* ────────────────────────── Optimistic helpers ────────────────────────── */
 
   const upsertOptimistic = (p: GridProduct) => {
     setLines(prev => {
@@ -636,11 +631,6 @@ export function POSInterface() {
       const quantity = Math.max(0, prev[idx].quantity - 1)
       const subtotal = +(quantity * unitPrice).toFixed(2)
       const next = prev.slice()
-      if (quantity === 0) {
-        // keep the row in place with qty 0; overlay will add pending when needed
-        next[idx] = { ...prev[idx], quantity, subtotal }
-        return next
-      }
       next[idx] = { ...prev[idx], quantity, subtotal }
       return next
     })
@@ -725,7 +715,6 @@ export function POSInterface() {
         }
       }
 
-      // IMPORTANT: reduce outstanding *before* composing to avoid double-count
       entry.inflightQty = 0
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid!, seq)
@@ -811,7 +800,6 @@ export function POSInterface() {
         }
       }
 
-      // Reduce outstanding *before* composing to avoid double-count
       entry.inflightDelta -= sent
       if (linesPayload) applyServerCart(linesPayload, seq)
       else await refreshCart(cid, seq)
@@ -857,7 +845,6 @@ export function POSInterface() {
     scheduleAddFlush(key, p)
   }
 
-  // spam-safe +
   const inc = async (line: CartLine) => {
     if (!cartId) return
     optimisticInc(line)
@@ -869,7 +856,6 @@ export function POSInterface() {
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
-  // spam-safe −
   const dec = async (line: CartLine) => {
     if (!cartId) return
     optimisticDec(line)
@@ -881,7 +867,6 @@ export function POSInterface() {
     scheduleLineFlush(key, { productId: line.productId, variationId: line.variationId })
   }
 
-  // Remove → keep row but qty will go to 0; overlay will converge on server
   const withLinePending = async (line: CartLine, fn: () => Promise<void>) => {
     const key = lineKeyOf(line)
     if (pendingLineKeys.has(key)) return
@@ -895,8 +880,7 @@ export function POSInterface() {
 
   const removeLine = async (line: CartLine) => {
     if (!cartId) return
-    optimisticDec({ ...line, quantity: 1, subtotal: line.unitPrice }) // quick visual drop by 1
-    // then push a hard delete (server wins)
+    optimisticDec({ ...line, quantity: 1, subtotal: line.unitPrice })
     await withLinePending(line, async () => {
       const seq = ++cartSeqRef.current
       try {
@@ -940,6 +924,11 @@ export function POSInterface() {
       localStorage.setItem(LS_KEYS.OUTLET, o)
     }
   }
+
+  // expose a cart sync for children (e.g., after stock error)
+  const syncCartNow = useCallback(() => {
+    if (cartId) void refreshCart(cartId)
+  }, [cartId])
 
   return (
     <>
@@ -1014,7 +1003,7 @@ export function POSInterface() {
               subtotal={subtotalEstimate}
               discountAmount={discountAmount}
               total={totalEstimate}
-              pendingKeys={pendingLineKeys}   // spinner only, not blocking +/-
+              pendingKeys={pendingLineKeys}
             />
           </div>
         </div>
@@ -1059,7 +1048,7 @@ export function POSInterface() {
                   subtotal={subtotalEstimate}
                   discountAmount={discountAmount}
                   total={totalEstimate}
-                  pendingKeys={pendingLineKeys}   // spinner only, not blocking +/-
+                  pendingKeys={pendingLineKeys}
                 />
               </div>
             </SheetContent>
@@ -1076,6 +1065,7 @@ export function POSInterface() {
           registerId={outletId}
           storeId={storeId}
           onComplete={onCompleteCheckout}
+          onSyncCart={syncCartNow}   // NEW: allow child to refresh cart after stock error
           discount={{
             type: discountType,
             value: Number(discountValue || 0)

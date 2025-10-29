@@ -12,7 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { PauseCircle, Check, X, RefreshCw, Info } from "lucide-react";
+import { PauseCircle, Check, X, RefreshCw, Info, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -22,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 type PaymentMethodRow = {
   id: string;
@@ -46,6 +47,8 @@ type CheckoutDialogProps = {
   onComplete: (orderId: string, parked?: boolean) => void;
   /** Optional POS discount to apply as coupon "POS" */
   discount?: DiscountPayload;
+  /** Ask parent to refresh cart (e.g., after stock/backorder error) */
+  onSyncCart?: () => void;
 };
 
 // Adjust if your app uses a different route
@@ -66,6 +69,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     storeId,
     onComplete,
     discount,
+    onSyncCart,
   } = props;
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
@@ -86,6 +90,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
   const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
+
+  // When server reports stock/backorder error, we gate completion until user fixes cart
+  const [stockIssueMsg, setStockIssueMsg] = useState<string | null>(null);
 
   const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments]);
 
@@ -128,6 +135,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setError(null);
       setSelectedNiftipay("");
       setEffectiveSubtotal(null);
+      setStockIssueMsg(null);
     }
   }, [open]);
 
@@ -148,6 +156,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     let ignore = false;
     (async () => {
       setMethodsLoaded(false);
+      setStockIssueMsg(null); // clear any prior gating when re-opening
       try {
         const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`);
         const j = await res.json().catch(() => ({} as any));
@@ -230,7 +239,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     window.open(PAYMENT_METHODS_URL, "_blank", "noopener,noreferrer");
   const refreshMethods = () => setMethodsReload((n) => n + 1);
 
-  const noPosMethods = methodsLoaded && paymentMethods.length === 0;
+  const noPosMethods = methodsLoaded && paymentMethods.length == 0;
 
   /* ───────────────────────── Split helpers ───────────────────────── */
   const handleAddPayment = () => {
@@ -339,6 +348,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
     try {
       setBusy(true);
+      setStockIssueMsg(null); // reset any previous stock message
+
       const idem =
         ((globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string;
 
@@ -368,22 +379,47 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
         body: JSON.stringify(payload),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Checkout failed");
 
+      // Handle stock/backorder failure with toast + hard gate
+      if (!res.ok) {
+        let message = "Checkout failed";
+        try {
+          const data = await res.clone().json();
+          message = data?.error || data?.message || message;
+        } catch {
+          try { message = await res.text(); } catch {}
+        }
+
+        const stockLike = /insufficient stock|back-?orders? (are )?disabled|out of stock/i.test(message);
+        if (stockLike) {
+          // Show toast and inline banner, ask parent to refresh the cart snapshot
+          toast.error(message || "Insufficient stock / back-orders disabled");
+          setStockIssueMsg(message || "Insufficient stock and back-orders are disabled.");
+          onSyncCart?.();
+          setBusy(false);
+          return; // keep dialog open, block completion until user fixes cart
+        }
+
+        throw new Error(message);
+      }
+
+      const data = await res.json().catch(() => ({}));
       const orderId = data?.order?.id || data?.orderId;
       if (!orderId) throw new Error("No order id returned");
+
+      // Success – close dialog and let parent show receipt dialog
       onComplete(orderId);
       onOpenChange(false);
     } catch (e: any) {
       setError(e?.message || "Checkout failed");
     } finally {
+      // If we early-returned due to stock issue, busy was already cleared
       setBusy(false);
     }
   };
 
   const canPark = !!cartId && !!clientId && !!registerId && !busy; // parking allowed even with no methods
-  const canComplete = remaining === 0 && !busy && !niftiSelectionRequired;
+  const canComplete = remaining === 0 && !niftiSelectionRequired && !stockIssueMsg; // allow disabled state to show spinner via content
 
   // Did the server subtotal differ from the client cart estimate? (purely informational)
   const showedEstimateFromCart = serverTotal == null;
@@ -402,8 +438,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <Dialog open={open} onOpenChange={(v) => { if (!busy) onOpenChange(v) }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl" aria-busy={busy}>
           <DialogHeader>
             <DialogTitle>Checkout</DialogTitle>
           </DialogHeader>
@@ -436,6 +472,28 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                 </>
               )}
             </div>
+
+            {/* Stock/backorder inline warning (blocks completion) */}
+            {stockIssueMsg && (
+              <div
+                role="alert"
+                className="rounded-md border border-destructive/40 bg-destructive/10 text-destructive p-3 text-sm flex items-start gap-2"
+              >
+                <AlertTriangle className="h-4 w-4 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-medium">Cannot complete checkout</div>
+                  <div className="opacity-90">{stockIssueMsg}</div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-destructive/40 text-destructive"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Back to cart
+                </Button>
+              </div>
+            )}
 
             {/* Payment methods (skeleton → grid) */}
             <div className="space-y-2">
@@ -487,7 +545,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
             </div>
 
             {/* Niftipay network picker */}
-            {methodsLoaded && !noPosMethods && currentMethodIsNiftipay && (
+            {methodsLoaded && !noPosMethods && /niftipay/i.test(paymentMethods.find(pm => pm.id === currentMethodId)?.name || "") && (
               <div className="space-y-2">
                 <Label>Crypto Network</Label>
                 {niftipayLoading ? (
@@ -594,6 +652,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                             className="h-8 w-8"
                             onClick={() => removePayment(p.methodId)}
                             aria-label={`Remove ${methodName}`}
+                            disabled={busy}
                           >
                             <X className="h-4 w-4" />
                           </Button>
@@ -632,7 +691,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                 </Button>
               )}
 
-              {/* Park order (allowed even with no methods) */}
+              {/* Park order */}
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -647,8 +706,17 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                       onClick={submitParkedCheckout}
                       disabled={!canPark || niftiSelectionRequired}
                     >
-                      <PauseCircle className="h-4 w-4" />
-                      Park Order
+                      {busy ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Parking…
+                        </>
+                      ) : (
+                        <>
+                          <PauseCircle className="h-4 w-4" />
+                          Park Order
+                        </>
+                      )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="top" align="start" className="max-w-xs">
@@ -659,9 +727,22 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               </TooltipProvider>
 
               {/* Complete */}
-              <Button className="w-full sm:flex-1" onClick={submitCheckout} disabled={!canComplete}>
-                <Check className="h-4 w-4" />
-                Complete Transaction
+              <Button
+                className="w-full sm:flex-1"
+                onClick={submitCheckout}
+                disabled={!canComplete || busy}
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Completing…
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Complete Transaction
+                  </>
+                )}
               </Button>
             </div>
           </div>
@@ -674,7 +755,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Checkout error</AlertDialogTitle>
           </AlertDialogHeader>
-        <div className="text-sm text-muted-foreground">{error}</div>
+          <div className="text-sm text-muted-foreground">{error}</div>
           <AlertDialogFooter>
             <AlertDialogAction onClick={() => setError(null)}>OK</AlertDialogAction>
           </AlertDialogFooter>
