@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useEffect } from "react"
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ColumnDef, getCoreRowModel, useReactTable } from "@tanstack/react-table";
@@ -27,6 +28,8 @@ countriesLib.registerLocale(enLocale);
 
 // Reusable info tooltip + dialog component
 import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 type Store = {
   id: string;
@@ -48,6 +51,12 @@ function formatAddress(a?: Record<string, any> | null) {
 
 export default function StoresPage() {
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle()
+
+  useEffect(() => {
+    setHeaderTitle("Stores") // Set the header title for this page
+  }, [setHeaderTitle])
+
   const [isLoading, setIsLoading] = React.useState(true);
   const [rows, setRows] = React.useState<Store[]>([]);
   const [query, setQuery] = React.useState("");
@@ -371,8 +380,9 @@ export default function StoresPage() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Stores</h1>
-            <p className="text-muted-foreground">Manage physical locations</p>
+            <PageHeader
+              title="Stores"
+              description="Manage physical locations" />
           </div>
 
           {/* Use InfoHelpDialog with the new `content` prop */}

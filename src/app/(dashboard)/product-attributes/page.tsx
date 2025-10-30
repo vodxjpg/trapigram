@@ -6,15 +6,22 @@ import { Suspense } from "react";
 
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
-
 import { AttributeTable } from "./components/attribute-table";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
 export default function ProductAttributesPage() {
-  const { setHeaderTitle } = useHeaderTitle();
+  const { setHeaderTitle } = useHeaderTitle()
+
+  useEffect(() => {
+    setHeaderTitle("Product attributes") // Set the header title for this page
+  }, [setHeaderTitle])
 
   /* ── active organisation → permission hook ─────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
@@ -25,8 +32,6 @@ export default function ProductAttributesPage() {
     isLoading: permLoading,   // while resolving
   } = useHasPermission(organizationId, { productAttributes: ["view"] });
 
-  /* set page title in global header */
-  useEffect(() => { setHeaderTitle("Product Attributes"); }, [setHeaderTitle]);
 
   /* ── guards ─────────────────────────────────────────────────────── */
   if (permLoading) return null;
@@ -42,16 +47,40 @@ export default function ProductAttributesPage() {
   /* ── page UI ────────────────────────────────────────────────────── */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold tracking-tight">Attributes</h1>
-        <p className="text-muted-foreground">
-          Manage your product attributes (e.g., Brand, Color) and their terms.
-        </p>
-      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Attributes"
+              description="Manage your product attributes (e.g., Brand, Color) and their terms." />
+          </div>
 
-      <Suspense fallback={<div>Loading attributes table…</div>}>
+
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About product attributes"
+            tooltip="What are product attributes?"
+            content={
+              <>
+                <p>
+                  <strong>Product attributes</strong> are characteristics that define and describe your products, such as brand, color, size, material, or any other specification.
+                </p>
+                <p>
+                  Attributes help organize products more clearly and allow customers or systems to filter, search, and differentiate items within your catalog. They also play an essential role when creating product variations.
+                </p>
+                <p>
+                  In the table below, you can create, edit, or delete attributes. Click the <strong>+</strong> button to add a new attribute, then assign it to products or use it when creating variations.
+                </p>
+              </>
+            }
+
+          />
+        </div>
+      </div>
+      <Suspense fallback={<div>Loading categories table...</div>}>
         <AttributeTable />
       </Suspense>
+
     </div>
   );
 }

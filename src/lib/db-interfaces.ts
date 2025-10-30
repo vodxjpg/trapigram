@@ -1,276 +1,378 @@
-// AUTO-GENERATED from provided schema
+// AUTO-GENERATED FROM DB.txt
 
-export type Json = unknown;
-
-export interface account {
-  id: string;
-  userId: string;
-  accountId: string;
-  providerId: string;
-  accessToken: string;
-  refreshToken: string;
-  accessTokenExpiresAt: Date;
-  refreshTokenExpiresAt: Date;
-  scope: string;
-  idToken: string;
-  password: string;
-  createdAt: Date;
-  updatedAt: Date;
+export interface DB {
+  "public.account": AccountRow;
+  "public.affiliateGroupMembers": AffiliateGroupMembersRow;
+  "public.affiliateGroups": AffiliateGroupsRow;
+  "public.affiliateLevels": AffiliateLevelsRow;
+  "public.affiliatePointBalances": AffiliatePointBalancesRow;
+  "public.affiliatePointLogs": AffiliatePointLogsRow;
+  "public.affiliateProductVariations": AffiliateProductVariationsRow;
+  "public.affiliateProducts": AffiliateProductsRow;
+  "public.affiliateSettings": AffiliateSettingsRow;
+  "public.announcements": AnnouncementsRow;
+  "public.apikey": ApikeyRow;
+  "public.automationRuleLocks": AutomationRuleLocksRow;
+  "public.automationRules": AutomationRulesRow;
+  "public.cartProducts": CartProductsRow;
+  "public.carts": CartsRow;
+  "public.categoryRevenue": CategoryRevenueRow;
+  "public.clientAddresses": ClientAddressesRow;
+  "public.clientSecretPhrase": ClientSecretPhraseRow;
+  "public.clients": ClientsRow;
+  "public.coupons": CouponsRow;
+  "public.creditExternalIdentities": CreditExternalIdentitiesRow;
+  "public.creditHolds": CreditHoldsRow;
+  "public.creditLedgerEntries": CreditLedgerEntriesRow;
+  "public.creditSyncCodes": CreditSyncCodesRow;
+  "public.creditWallets": CreditWalletsRow;
+  "public.exchangeRate": ExchangeRateRow;
+  "public.idempotency": IdempotencyRow;
+  "public.inAppNotifications": InAppNotificationsRow;
+  "public.inventoryCount": InventoryCountRow;
+  "public.inventoryCountItems": InventoryCountItemsRow;
+  "public.invitation": InvitationRow;
+  "public.invoiceItems": InvoiceItemsRow;
+  "public.member": MemberRow;
+  "public.notificationGroups": NotificationGroupsRow;
+  "public.notificationOutbox": NotificationOutboxRow;
+  "public.notificationTemplates": NotificationTemplatesRow;
+  "public.notifications": NotificationsRow;
+  "public.orderFees": OrderFeesRow;
+  "public.orderMessageReceipts": OrderMessageReceiptsRow;
+  "public.orderMessages": OrderMessagesRow;
+  "public.orderNotes": OrderNotesRow;
+  "public.orderPayments": OrderPaymentsRow;
+  "public.orderRevenue": OrderRevenueRow;
+  "public.orders": OrdersRow;
+  "public.orgRole": OrgRoleRow;
+  "public.orgSecretCode": OrgSecretCodeRow;
+  "public.organization": OrganizationRow;
+  "public.organizationPlatformKey": OrganizationPlatformKeyRow;
+  "public.organizationSupportEmail": OrganizationSupportEmailRow;
+  "public.paymentMethods": PaymentMethodsRow;
+  "public.placeholders": PlaceholdersRow;
+  "public.posIdempotency": PosIdempotencyRow;
+  "public.posReceiptTemplates": PosReceiptTemplatesRow;
+  "public.productAttributeTerms": ProductAttributeTermsRow;
+  "public.productAttributeValues": ProductAttributeValuesRow;
+  "public.productAttributes": ProductAttributesRow;
+  "public.productCategories": ProductCategoriesRow;
+  "public.productCategory": ProductCategoryRow;
+  "public.productTaxRules": ProductTaxRulesRow;
+  "public.productVariations": ProductVariationsRow;
+  "public.products": ProductsRow;
+  "public.rateLimit": RateLimitRow;
+  "public.registers": RegistersRow;
+  "public.reviews": ReviewsRow;
+  "public.sections": SectionsRow;
+  "public.session": SessionRow;
+  "public.sharedProduct": SharedProductRow;
+  "public.sharedProductMapping": SharedProductMappingRow;
+  "public.sharedVariationMapping": SharedVariationMappingRow;
+  "public.shipments": ShipmentsRow;
+  "public.shippingMethods": ShippingMethodsRow;
+  "public.stores": StoresRow;
+  "public.subscription": SubscriptionRow;
+  "public.supplierCart": SupplierCartRow;
+  "public.supplierCartProducts": SupplierCartProductsRow;
+  "public.supplierOrders": SupplierOrdersRow;
+  "public.suppliers": SuppliersRow;
+  "public.tags": TagsRow;
+  "public.taxRules": TaxRulesRow;
+  "public.team": TeamRow;
+  "public.telegramDedup": TelegramDedupRow;
+  "public.tenant": TenantRow;
+  "public.ticketMessageReceipts": TicketMessageReceiptsRow;
+  "public.ticketMessages": TicketMessagesRow;
+  "public.ticketSupportGroups": TicketSupportGroupsRow;
+  "public.ticketTags": TicketTagsRow;
+  "public.tickets": TicketsRow;
+  "public.tierPricingClients": TierPricingClientsRow;
+  "public.tierPricingProducts": TierPricingProductsRow;
+  "public.tierPricingSteps": TierPricingStepsRow;
+  "public.tierPricings": TierPricingsRow;
+  "public.user": UserRow;
+  "public.userFeeRates": UserFeeRatesRow;
+  "public.userInvoices": UserInvoicesRow;
+  "public.verification": VerificationRow;
+  "public.warehouse": WarehouseRow;
+  "public.warehouseShareLink": WarehouseShareLinkRow;
+  "public.warehouseShareRecipient": WarehouseShareRecipientRow;
+  "public.warehouseStock": WarehouseStockRow;
 }
 
-export interface affiliateGroupMembers {
+// -------- TABLE INTERFACES --------
+
+export interface AccountRow {
+  id: string;
+  userId: string;
+  accountId?: string;
+  providerId?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
+  scope?: string;
+  idToken?: string;
+  password?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AffiliateGroupMembersRow {
   id: string;
   organizationId: string;
   affiliateGroupId: string;
   groupId: string;
   userId: string;
   clientId: string;
-  joinedAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  joinedAt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface affiliateGroups {
+export interface AffiliateGroupsRow {
   id: string;
   organizationId: string;
   groupId: string;
   points: number;
   platform: string;
-  createdAt: Date;
-  updatedAt: Date;
-  groupName: string;
+  createdAt: string;
+  updatedAt: string;
+  groupName?: string;
 }
 
-export interface affiliateLevels {
+export interface AffiliateLevelsRow {
   id: string;
   organizationId: string;
   name: string;
-  image: string;
-  levelUpMessage: string;
-  levelUpMessageGroup: string;
+  image?: string;
+  levelUpMessage?: string;
+  levelUpMessageGroup?: string;
   requiredPoints: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface affiliatePointBalances {
+export interface AffiliatePointBalancesRow {
   clientId: string;
   organizationId: string;
   pointsCurrent: number;
   pointsSpent: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface affiliatePointLogs {
+export interface AffiliatePointLogsRow {
   id: string;
   organizationId: string;
   clientId: string;
   points: number;
   action: string;
-  description: string;
-  sourceClientId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  description?: string;
+  sourceClientId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface affiliateProductVariations {
+export interface AffiliateProductVariationsRow {
   id: string;
   productId: string;
-  attributes: unknown;
+  attributes: any;
   sku: string;
-  regularPoints: unknown;
-  salePoints: unknown;
-  cost: unknown;
-  image: string;
-  stock: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-  minLevelId: string;
+  regularPoints: any;
+  salePoints?: any;
+  cost: any;
+  image?: string;
+  stock?: any;
+  createdAt: string;
+  updatedAt: string;
+  minLevelId?: string;
 }
 
-export interface affiliateProducts {
+export interface AffiliateProductsRow {
   id: string;
   organizationId: string;
   tenantId: string;
   title: string;
-  description: string;
-  image: string;
+  description?: string;
+  image?: string;
   sku: string;
   status: string;
   productType: string;
-  regularPoints: unknown;
-  salePoints: unknown;
-  cost: unknown;
+  regularPoints: any;
+  salePoints?: any;
+  cost: any;
   allowBackorders: boolean;
   manageStock: boolean;
   stockStatus: string;
-  createdAt: Date;
-  updatedAt: Date;
-  minLevelId: string;
+  createdAt: string;
+  updatedAt: string;
+  minLevelId?: string;
 }
 
-export interface affiliateSettings {
+export interface AffiliateSettingsRow {
   organizationId: string;
   pointsPerReferral: number;
   pointsPerReview: number;
   spendingNeeded: string;
   pointsPerSpending: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   monetaryValuePerPoint: string;
 }
 
-export interface announcements {
+export interface AnnouncementsRow {
   id: string;
   organizationId: string;
   title: string;
   content: string;
-  deliveryDate: Date;
+  deliveryDate?: string;
   countries: string;
   sent: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface apikey {
+export interface ApikeyRow {
   id: string;
-  name: string;
-  start: string;
-  prefix: string;
+  name?: string;
+  start?: string;
+  prefix?: string;
   key: string;
   userId: string;
-  refillInterval: number;
-  refillAmount: number;
-  lastRefillAt: Date;
-  enabled: boolean;
-  rateLimitEnabled: boolean;
-  rateLimitTimeWindow: number;
-  rateLimitMax: number;
-  requestCount: number;
-  remaining: number;
-  lastRequest: Date;
-  expiresAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  permissions: string;
-  metadata: string;
+  refillInterval?: number;
+  refillAmount?: number;
+  lastRefillAt?: string;
+  enabled?: boolean;
+  rateLimitEnabled?: boolean;
+  rateLimitTimeWindow?: number;
+  rateLimitMax?: number;
+  requestCount?: number;
+  remaining?: number;
+  lastRequest?: string;
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  permissions?: string;
+  metadata?: string;
 }
 
-export interface automationRuleLocks {
+export interface AutomationRuleLocksRow {
   id: string;
   organizationId: string;
   ruleId: string;
   event: string;
-  clientId: string;
-  orderId: string;
+  clientId?: string;
+  orderId?: string;
   dedupeKey: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface automationRules {
+export interface AutomationRulesRow {
   id: string;
   organizationId: string;
   name: string;
-  description: string;
+  description?: string;
   enabled: boolean;
   priority: number;
   event: string;
   countries: string;
   action: string;
   channels: string;
-  payload: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  payload: any;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface cartProducts {
+export interface CartProductsRow {
   id: string;
   cartId: string;
-  productId: string;
+  productId?: string;
   quantity: number;
   unitPrice: string;
-  createdAt: Date;
-  updatedAt: Date;
-  affiliateProductId: string;
-  variationId: string;
+  createdAt: string;
+  updatedAt: string;
+  affiliateProductId?: string;
+  variationId?: string;
 }
 
-export interface carts {
+export interface CartsRow {
   id: string;
   clientId: string;
   country: string;
-  couponCode: string;
-  shippingMethod: string;
+  couponCode?: string;
+  shippingMethod?: string;
   cartHash: string;
   cartUpdatedHash: string;
   status: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  organizationId: string;
-  channel: string;
+  createdAt: string;
+  updatedAt: string;
+  organizationId?: string;
+  channel?: string;
 }
 
-export interface categoryRevenue {
+export interface CategoryRevenueRow {
   id: string;
   categoryId: string;
-  USDtotal: string;
-  USDcost: string;
-  GBPtotal: string;
-  GBPcost: string;
-  EURtotal: string;
-  EURcost: string;
+  USDtotal?: string;
+  USDcost?: string;
+  GBPtotal?: string;
+  GBPcost?: string;
+  EURtotal?: string;
+  EURcost?: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface clientAddresses {
+export interface ClientAddressesRow {
   id: string;
   clientId: string;
   address: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface clientSecretPhrase {
+export interface ClientSecretPhraseRow {
   id: string;
   clientId: string;
   phrase: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface clients {
+export interface ClientsRow {
   id: string;
-  userId: string;
+  userId?: string;
   organizationId: string;
   username: string;
   firstName: string;
   lastName: string;
-  lastInteraction: Date;
-  email: string;
-  phoneNumber: string;
-  country: string;
-  levelId: string;
-  referredBy: string;
-  createdAt: Date;
-  updatedAt: Date;
+  lastInteraction: string;
+  email?: string;
+  phoneNumber?: string;
+  country?: string;
+  levelId?: string;
+  referredBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
   secretPhraseEnabled: boolean;
   secretPhraseReverifyDays: number;
-  secretPhraseForceAt: Date;
+  secretPhraseForceAt?: string;
 }
 
-export interface coupons {
+export interface CouponsRow {
   id: string;
   organizationId: string;
   name: string;
   code: string;
-  description: string;
+  description?: string;
   discountType: string;
   discountAmount: string;
-  startDate: Date;
-  expirationDate: Date;
+  startDate: string;
+  expirationDate?: string;
   limitPerUser: number;
   usagePerUser: number;
   usageLimit: number;
@@ -278,22 +380,22 @@ export interface coupons {
   expendingLimit: string;
   countries: string;
   visibility: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  stackable: boolean;
+  createdAt: string;
+  updatedAt: string;
+  stackable?: boolean;
 }
 
-export interface creditExternalIdentities {
+export interface CreditExternalIdentitiesRow {
   id: string;
   organizationId: string;
   userId: string;
   provider: string;
   providerUserId: string;
-  email: string;
-  createdAt: Date;
+  email?: string;
+  createdAt: string;
 }
 
-export interface creditHolds {
+export interface CreditHoldsRow {
   id: string;
   organizationId: string;
   walletId: string;
@@ -301,79 +403,79 @@ export interface creditHolds {
   orderId: string;
   amountMinor: string;
   status: string;
-  expiresAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface creditLedgerEntries {
+export interface CreditLedgerEntriesRow {
   id: string;
   organizationId: string;
   walletId: string;
   direction: string;
   amountMinor: string;
   reason: string;
-  reference: unknown;
+  reference?: any;
   idempotencyKey: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface creditSyncCodes {
+export interface CreditSyncCodesRow {
   code: string;
   organizationId: string;
   provider: string;
   providerUserId: string;
-  email: string;
+  email?: string;
   status: string;
-  userId: string;
-  expiresAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  userId?: string;
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
-export interface creditWallets {
+export interface CreditWalletsRow {
   id: string;
   organizationId: string;
   userId: string;
   currency: string;
   status: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface exchangeRate {
+export interface ExchangeRateRow {
   EUR: string;
   GBP: string;
-  date: Date;
+  date?: string;
 }
 
-export interface idempotency {
+export interface IdempotencyRow {
   key: string;
   method: string;
   path: string;
-  status: number;
-  response: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  status?: number;
+  response?: any;
+  createdAt: string;
+  updatedAt?: string;
 }
 
-export interface inAppNotifications {
+export interface InAppNotificationsRow {
   id: string;
   organizationId: string;
-  userId: string;
-  clientId: string;
+  userId?: string;
+  clientId?: string;
   title: string;
   message: string;
-  country: string;
+  country?: string;
   read: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  url: string;
+  createdAt: string;
+  updatedAt: string;
+  url?: string;
 }
 
-export interface inventoryCount {
+export interface InventoryCountRow {
   id: string;
-  createdAt: Date;
+  createdAt: string;
   reference: string;
   warehouseId: string;
   countType: string;
@@ -381,172 +483,172 @@ export interface inventoryCount {
   userId: string;
   countries: string;
   isCompleted: boolean;
-  updatedAt: Date;
+  updatedAt: string;
 }
 
-export interface inventoryCountItems {
+export interface InventoryCountItemsRow {
   id: string;
   inventoryCountId: string;
   productId: string;
-  variationId: string;
+  variationId?: string;
   country: string;
   expectedQuantity: string;
-  countedQuantity: string;
-  discrepancyReason: string;
+  countedQuantity?: string;
+  discrepancyReason?: string;
   isCounted: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt?: string;
 }
 
-export interface invitation {
+export interface InvitationRow {
   id: string;
   email: string;
   inviterId: string;
   organizationId: string;
   role: string;
   status: string;
-  expiresAt: Date;
-  createdAt: Date;
+  expiresAt: string;
+  createdAt?: string;
 }
 
-export interface invoiceItems {
+export interface InvoiceItemsRow {
   id: string;
   invoiceId: string;
   orderFeeId: string;
   amount: string;
 }
 
-export interface member {
+export interface MemberRow {
   id: string;
   userId: string;
   organizationId: string;
   role: string;
-  createdAt: Date;
+  createdAt?: string;
 }
 
-export interface notificationGroups {
+export interface NotificationGroupsRow {
   id: string;
   organizationId: string;
   name: string;
   countries: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   groupId: string;
 }
 
-export interface notificationOutbox {
+export interface NotificationOutboxRow {
   id: string;
   organizationId: string;
-  orderId: string;
+  orderId?: string;
   type: string;
-  trigger: string;
-  channel: string;
-  payload: unknown;
+  trigger?: string;
+  channel: "email" | "in_app" | "webhook" | "telegram" | string;
+  payload: any;
   dedupeKey: string;
   attempts: number;
   maxAttempts: number;
-  nextAttemptAt: Date;
-  lastError: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
+  nextAttemptAt: string;
+  lastError?: string;
+  status: "pending" | "sent" | "dead" | string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface notificationTemplates {
+export interface NotificationTemplatesRow {
   id: string;
   organizationId: string;
   type: string;
-  role: string;
-  countries: string;
-  subject: string;
+  role: "admin" | "user" | string;
+  countries?: string;
+  subject?: string;
   message: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface notifications {
+export interface NotificationsRow {
   id: string;
   organizationId: string;
   type: string;
-  trigger: string;
+  trigger?: string;
   message: string;
   channels: string;
-  country: string;
-  targetUserId: string;
-  targetClientId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  country?: string;
+  targetUserId?: string;
+  targetClientId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface orderFees {
+export interface OrderFeesRow {
   id: string;
   orderId: string;
   userId: string;
   feeAmount: string;
   percentApplied: string;
-  capturedAt: Date;
+  capturedAt: string;
 }
 
-export interface orderMessageReceipts {
+export interface OrderMessageReceiptsRow {
   messageId: string;
   clientId: string;
-  deliveredAt: Date;
+  deliveredAt: string;
 }
 
-export interface orderMessages {
+export interface OrderMessagesRow {
   id: string;
   orderId: string;
   clientId: string;
   isInternal: boolean;
   message: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface orderNotes {
+export interface OrderNotesRow {
   id: string;
   organizationId: string;
   orderId: string;
-  authorRole: string;
-  authorClientId: string;
-  authorUserId: string;
+  authorRole: "client" | "staff" | string;
+  authorClientId?: string;
+  authorUserId?: string;
   note: string;
   visibleToCustomer: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface orderPayments {
+export interface OrderPaymentsRow {
   id: string;
   orderId: string;
   methodId: string;
   amount: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface orderRevenue {
+export interface OrderRevenueRow {
   id: string;
   orderId: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
-  USDtotal: string;
-  USDdiscount: string;
-  USDshipping: string;
-  USDcost: string;
-  GBPtotal: string;
-  GBPdiscount: string;
-  GBPshipping: string;
-  GBPcost: string;
-  EURtotal: string;
-  EURdiscount: string;
-  EURshipping: string;
-  EURcost: string;
-  cancelled: boolean;
-  refunded: boolean;
+  createdAt: string;
+  updatedAt: string;
+  USDtotal?: string;
+  USDdiscount?: string;
+  USDshipping?: string;
+  USDcost?: string;
+  GBPtotal?: string;
+  GBPdiscount?: string;
+  GBPshipping?: string;
+  GBPcost?: string;
+  EURtotal?: string;
+  EURdiscount?: string;
+  EURshipping?: string;
+  EURcost?: string;
+  cancelled?: boolean;
+  refunded?: boolean;
 }
 
-export interface orders {
+export interface OrdersRow {
   id: string;
   organizationId: string;
   clientId: string;
@@ -554,357 +656,358 @@ export interface orders {
   country: string;
   status: string;
   paymentMethod: string;
-  orderKey: string;
+  orderKey?: string;
   cartHash: string;
-  shippingMethod: string;
+  shippingMethod?: string;
   shippingTotal: string;
   discountTotal: string;
-  counponType: string;
+  counponType?: string;
   totalAmount: string;
-  couponCode: string;
-  shippingService: string;
-  address: string;
-  dateCreated: Date;
-  datePaid: Date;
-  dateCompleted: Date;
-  dateCancelled: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  couponCode?: string;
+  shippingService?: string;
+  address?: string;
+  dateCreated: string;
+  datePaid?: string;
+  dateCompleted?: string;
+  dateCancelled?: string;
+  createdAt: string;
+  updatedAt: string;
   subtotal: string;
-  couponType: string;
-  trackingNumber: string;
+  couponType?: string;
+  trackingNumber?: string;
   pointsRedeemed: number;
   pointsRedeemedAmount: string;
   notifiedPaidOrCompleted: boolean;
-  orderMeta: unknown;
-  dateUnderpaid: Date;
+  orderMeta: any;
+  dateUnderpaid?: string;
   referralAwarded: boolean;
-  discountValue: unknown;
-  orderChannel: string;
-  channel: string;
+  discountValue?: string[]; // text[]
+  orderChannel?: "web" | "pos" | string;
+  channel: string; // default 'web'
 }
 
-export interface orgRole {
+export interface OrgRoleRow {
   id: string;
   organizationId: string;
   name: string;
-  permissions: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  permissions: any;
+  createdAt: string;
+  updatedAt?: string;
 }
 
-export interface orgSecretCode {
+export interface OrgSecretCodeRow {
   id: string;
   organizationId: string;
   userId: string;
   codeHash: string;
   attempts: number;
-  expiresAt: Date;
-  verifiedAt: Date;
-  consumedAt: Date;
-  ticketId: string;
-  createdAt: Date;
+  expiresAt: string;
+  verifiedAt?: string;
+  consumedAt?: string;
+  ticketId?: string;
+  createdAt: string;
 }
 
-export interface organization {
+export interface OrganizationRow {
   id: string;
   name: string;
   slug: string;
-  logo: string;
-  metadata: string;
+  logo?: string;
+  metadata?: string;
   countries: string;
-  encryptedSecret: string;
-  createdAt: Date;
-  updatedAt: Date;
+  encryptedSecret?: string;
+  createdAt?: string;
+  updatedAt?: string;
   secretPhraseEnabled: boolean;
 }
 
-export interface organizationPlatformKey {
+export interface OrganizationPlatformKeyRow {
   id: string;
   organizationId: string;
   platform: string;
   apiKey: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface organizationSupportEmail {
+export interface OrganizationSupportEmailRow {
   id: string;
   organizationId: string;
-  country: string;
+  country?: string;
   isGlobal: boolean;
   email: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface paymentMethods {
+export interface PaymentMethodsRow {
   id: string;
   name: string;
   tenantId: string;
-  apiKey: string;
-  secretKey: string;
+  apiKey?: string;
+  secretKey?: string;
   active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  description: string;
-  instructions: string;
+  createdAt: string;
+  updatedAt: string;
+  description?: string;
+  instructions?: string;
   default: boolean;
   posVisible: boolean;
 }
 
-export interface placeholders {
+export interface PlaceholdersRow {
   key: string;
   description: string;
   source: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface posIdempotency {
+export interface PosIdempotencyRow {
   id: string;
   organizationId: string;
   key: string;
   orderId: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface posReceiptTemplates {
+export interface PosReceiptTemplatesRow {
   id: string;
   organizationId: string;
   name: string;
   type: string;
   printFormat: string;
-  options: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  options: any;
+  createdAt: string;
+  updatedAt: string;
+  defaultReceiptTemplateId?: never; // handled in stores
 }
 
-export interface productAttributeTerms {
+export interface ProductAttributeTermsRow {
   id: string;
   attributeId: string;
   name: string;
   slug: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface productAttributeValues {
+export interface ProductAttributeValuesRow {
   productId: string;
   attributeId: string;
   termId: string;
 }
 
-export interface productAttributes {
+export interface ProductAttributesRow {
   id: string;
   name: string;
   slug: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface productCategories {
+export interface ProductCategoriesRow {
   id: string;
   name: string;
   slug: string;
-  image: string;
+  image?: string;
   order: number;
   organizationId: string;
-  parentId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  parentId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface productCategory {
+export interface ProductCategoryRow {
   productId: string;
   categoryId: string;
 }
 
-export interface productTaxRules {
+export interface ProductTaxRulesRow {
   productId: string;
   taxRuleId: string;
 }
 
-export interface productVariations {
+export interface ProductVariationsRow {
   id: string;
   productId: string;
-  attributes: unknown;
+  attributes: any;
   sku: string;
-  regularPrice: unknown;
-  salePrice: unknown;
-  cost: unknown;
-  image: string;
-  stock: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  regularPrice: any;
+  salePrice?: any;
+  cost: any;
+  image?: string;
+  stock?: any;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface products {
+export interface ProductsRow {
   id: string;
   organizationId: string;
   tenantId: string;
   title: string;
-  description: string;
-  image: string;
+  description?: string;
+  image?: string;
   sku: string;
-  status: string;
-  productType: string;
-  regularPrice: unknown;
-  salePrice: unknown;
-  cost: unknown;
+  status: "published" | "draft" | string;
+  productType: "simple" | "variable" | string;
+  regularPrice: any;
+  salePrice?: any;
+  cost: any;
   allowBackorders: boolean;
   manageStock: boolean;
-  stockStatus: string;
-  createdAt: Date;
-  updatedAt: Date;
+  stockStatus: "managed" | "unmanaged" | string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface rateLimit {
+export interface RateLimitRow {
   id: string;
   key: string;
   count: number;
   lastRequest: string;
 }
 
-export interface registers {
+export interface RegistersRow {
   id: string;
   organizationId: string;
   storeId: string;
   name: string;
   active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  displayActive: boolean;
-  displayDevice: string;
-  displayAccessKey: string;
-  displayPairCode: string;
-  displayPairCodeExpiresAt: Date;
-  displayPairedAt: Date;
-  displaySlides: unknown;
-  displaySessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  displayActive?: boolean;
+  displayDevice?: string;
+  displayAccessKey?: string;
+  displayPairCode?: string;
+  displayPairCodeExpiresAt?: string;
+  displayPairedAt?: string;
+  displaySlides?: any;
+  displaySessionId?: string;
 }
 
-export interface reviews {
+export interface ReviewsRow {
   id: string;
-  orderId: string;
+  orderId?: string;
   organizationId: string;
   text: string;
   rate: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface sections {
+export interface SectionsRow {
   id: string;
   organizationId: string;
-  parentSectionId: string;
+  parentSectionId?: string;
   name: string;
   title: string;
   content: string;
-  videoUrl: string;
-  createdAt: Date;
-  updatedAt: Date;
+  videoUrl?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface session {
+export interface SessionRow {
   id: string;
   userId: string;
   token: string;
-  expiresAt: Date;
-  ipAddress: string;
-  userAgent: string;
-  activeOrganizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  expiresAt?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  activeOrganizationId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface sharedProduct {
+export interface SharedProductRow {
   id: string;
   shareLinkId: string;
   productId: string;
-  variationId: string;
-  cost: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+  variationId?: string;
+  cost: any;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface sharedProductMapping {
+export interface SharedProductMappingRow {
   id: string;
   shareLinkId: string;
   sourceProductId: string;
   targetProductId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface sharedVariationMapping {
+export interface SharedVariationMappingRow {
   id: string;
   shareLinkId: string;
   sourceProductId: string;
   targetProductId: string;
   sourceVariationId: string;
   targetVariationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface shipments {
+export interface ShipmentsRow {
   id: string;
   organizationId: string;
   countries: string;
   title: string;
   description: string;
   costs: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface shippingMethods {
+export interface ShippingMethodsRow {
   id: string;
   organizationId: string;
   name: string;
   url: string;
   countries: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface stores {
+export interface StoresRow {
   id: string;
   organizationId: string;
   name: string;
   address: string;
-  phone: string;
-  timezone: string;
-  taxRegistration: string;
-  createdAt: Date;
-  updatedAt: Date;
-  defaultReceiptTemplateId: string;
+  phone?: string;
+  timezone?: string;
+  taxRegistration?: string;
+  createdAt: string;
+  updatedAt: string;
+  defaultReceiptTemplateId?: string;
 }
 
-export interface subscription {
+export interface SubscriptionRow {
   id: string;
   userId: string;
-  plan: string;
-  status: string;
-  trialStart: Date;
-  trialEnd: Date;
-  periodStart: Date;
-  periodEnd: Date;
+  plan?: string;
+  status?: string;
+  trialStart?: string;
+  trialEnd?: string;
+  periodStart?: string;
+  periodEnd?: string;
 }
 
-export interface supplierCart {
+export interface SupplierCartRow {
   id: string;
   supplierId: string;
   organizationId: string;
   status: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface supplierCartProducts {
+export interface SupplierCartProductsRow {
   id: string;
   supplierCartId: string;
   productId: string;
@@ -912,358 +1015,256 @@ export interface supplierCartProducts {
   quantity: string;
   cost: string;
   country: string;
-  createdAt: Date;
-  updatedAt: Date;
-  received: string;
-  variationId: string;
+  createdAt: string;
+  updatedAt: string;
+  received?: string;
+  variationId?: string;
 }
 
-export interface supplierOrders {
+export interface SupplierOrdersRow {
   id: string;
   supplierId: string;
   organizationId: string;
   supplierCartId: string;
-  note: string;
+  note?: string;
   status: string;
-  expectedAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  expectedAt?: string;
+  createdAt: string;
+  updatedAt: string;
   orderKey: string;
 }
 
-export interface suppliers {
+export interface SuppliersRow {
   id: string;
   code: string;
   name: string;
   email: string;
-  phone: string;
+  phone?: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface tags {
+export interface TagsRow {
   id: string;
-  description: string;
-  createdAt: Date;
-  updatedAt: Date;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
-export interface taxRules {
+export interface TaxRulesRow {
   id: string;
   organizationId: string;
   name: string;
   rate: string;
   inclusive: boolean;
-  region: string;
-  country: string;
-  state: string;
-  city: string;
-  postcode: string;
+  region?: string;
+  country?: string;
+  state?: string;
+  city?: string;
+  postcode?: string;
   priority: number;
   compound: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface team {
+export interface TeamRow {
   id: string;
   name: string;
   organizationId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface telegramDedup {
+export interface TelegramDedupRow {
   chatId: string;
   textHash: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface tenant {
+export interface TenantRow {
   id: string;
   ownerUserId: string;
-  ownerName: string;
-  ownerEmail: string;
-  plan: string;
-  createdAt: Date;
-  updatedAt: Date;
-  onboardingCompleted: number;
+  ownerName?: string;
+  ownerEmail?: string;
+  plan?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  onboardingCompleted?: number;
 }
 
-export interface ticketMessageReceipts {
+export interface TicketMessageReceiptsRow {
   messageId: string;
   clientId: string;
-  deliveredAt: Date;
+  deliveredAt: string;
 }
 
-export interface ticketMessages {
+export interface TicketMessagesRow {
   id: string;
   ticketId: string;
   message: string;
-  attachments: string;
+  attachments?: string;
   isInternal: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface ticketSupportGroups {
+export interface TicketSupportGroupsRow {
   id: string;
   organizationId: string;
   name: string;
   countries: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   groupId: string;
 }
 
-export interface ticketTags {
+export interface TicketTagsRow {
   id: string;
   ticketId: string;
-  tagId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  tagId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface tickets {
+export interface TicketsRow {
   id: string;
   organizationId: string;
   clientId: string;
   title: string;
   status: string;
   priority: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
   ticketKey: string;
-  lastMessageAt: Date;
+  lastMessageAt?: string;
 }
 
-export interface tierPricingClients {
+export interface TierPricingClientsRow {
   id: string;
   tierPricingId: string;
   clientId: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
-export interface tierPricingProducts {
+export interface TierPricingProductsRow {
   id: string;
   tierPricingId: string;
-  productId: string;
-  variationId: string;
-  createdAt: Date;
+  productId?: string;
+  variationId?: string;
+  createdAt: string;
 }
 
-export interface tierPricingSteps {
+export interface TierPricingStepsRow {
   id: string;
   tierPricingId: string;
   fromUnits: number;
   toUnits: number;
   price: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface tierPricings {
+export interface TierPricingsRow {
   id: string;
   organizationId: string;
   name: string;
-  countries: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-  active: boolean;
+  countries: any; // jsonb
+  createdAt: string;
+  updatedAt: string;
+  active?: boolean;
 }
 
-export interface user {
+export interface UserRow {
   id: string;
   email: string;
-  name: string;
-  phone: string;
-  country: string;
-  is_guest: boolean;
-  emailVerified: boolean;
-  image: string;
-  createdAt: Date;
-  updatedAt: Date;
+  name?: string;
+  phone?: string;
+  country?: string;
+  is_guest?: boolean;
+  emailVerified?: boolean;
+  image?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface userFeeRates {
+export interface UserFeeRatesRow {
   id: string;
   userId: string;
   percent: string;
-  startsAt: Date;
-  endsAt: Date;
-  createdAt: Date;
+  startsAt: string;
+  endsAt?: string;
+  createdAt: string;
 }
 
-export interface userInvoices {
+export interface UserInvoicesRow {
   id: string;
   userId: string;
-  periodStart: Date;
-  periodEnd: Date;
+  periodStart: string; // date
+  periodEnd: string;   // date
   totalAmount: string;
   status: string;
-  dueDate: Date;
-  createdAt: Date;
-  niftipayOrderId: string;
-  niftipayReference: string;
+  dueDate: string;     // date
+  createdAt: string;
+  niftipayOrderId?: string;
+  niftipayReference?: string;
   niftipayNetwork: string;
   niftipayAsset: string;
-  niftipayAddress: string;
-  niftipayQrUrl: string;
+  niftipayAddress?: string;
+  niftipayQrUrl?: string;
   paidAmount: string;
 }
 
-export interface verification {
+export interface VerificationRow {
   id: string;
   identifier: string;
   value: string;
-  expiresAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  expiresAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface warehouse {
+export interface WarehouseRow {
   id: string;
   tenantId: string;
   organizationId: string;
   name: string;
   countries: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface warehouseShareLink {
+export interface WarehouseShareLinkRow {
   id: string;
   warehouseId: string;
   creatorUserId: string;
   token: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
+  status: "active" | "revoked" | string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface warehouseShareRecipient {
+export interface WarehouseShareRecipientRow {
   id: string;
   shareLinkId: string;
   recipientUserId: string;
-  createdAt: Date;
-  updatedAt: Date;
-  targetWarehouseId: string;
+  createdAt?: string;
+  updatedAt?: string;
+  targetWarehouseId?: string;
 }
 
-export interface warehouseStock {
+export interface WarehouseStockRow {
   id: string;
   warehouseId: string;
-  productId: string;
-  variationId: string;
+  productId?: string;
+  variationId?: string;
   country: string;
   quantity: number;
   organizationId: string;
   tenantId: string;
-  createdAt: Date;
-  updatedAt: Date;
-  affiliateProductId: string;
-  affiliateVariationId: string;
-}
-
-export interface DB {
-  "account": account;
-  "affiliateGroupMembers": affiliateGroupMembers;
-  "affiliateGroups": affiliateGroups;
-  "affiliateLevels": affiliateLevels;
-  "affiliatePointBalances": affiliatePointBalances;
-  "affiliatePointLogs": affiliatePointLogs;
-  "affiliateProductVariations": affiliateProductVariations;
-  "affiliateProducts": affiliateProducts;
-  "affiliateSettings": affiliateSettings;
-  "announcements": announcements;
-  "apikey": apikey;
-  "automationRuleLocks": automationRuleLocks;
-  "automationRules": automationRules;
-  "cartProducts": cartProducts;
-  "carts": carts;
-  "categoryRevenue": categoryRevenue;
-  "clientAddresses": clientAddresses;
-  "clientSecretPhrase": clientSecretPhrase;
-  "clients": clients;
-  "coupons": coupons;
-  "creditExternalIdentities": creditExternalIdentities;
-  "creditHolds": creditHolds;
-  "creditLedgerEntries": creditLedgerEntries;
-  "creditSyncCodes": creditSyncCodes;
-  "creditWallets": creditWallets;
-  "exchangeRate": exchangeRate;
-  "idempotency": idempotency;
-  "inAppNotifications": inAppNotifications;
-  "inventoryCount": inventoryCount;
-  "inventoryCountItems": inventoryCountItems;
-  "invitation": invitation;
-  "invoiceItems": invoiceItems;
-  "member": member;
-  "notificationGroups": notificationGroups;
-  "notificationOutbox": notificationOutbox;
-  "notificationTemplates": notificationTemplates;
-  "notifications": notifications;
-  "orderFees": orderFees;
-  "orderMessageReceipts": orderMessageReceipts;
-  "orderMessages": orderMessages;
-  "orderNotes": orderNotes;
-  "orderPayments": orderPayments;
-  "orderRevenue": orderRevenue;
-  "orders": orders;
-  "orgRole": orgRole;
-  "orgSecretCode": orgSecretCode;
-  "organization": organization;
-  "organizationPlatformKey": organizationPlatformKey;
-  "organizationSupportEmail": organizationSupportEmail;
-  "paymentMethods": paymentMethods;
-  "placeholders": placeholders;
-  "posIdempotency": posIdempotency;
-  "posReceiptTemplates": posReceiptTemplates;
-  "productAttributeTerms": productAttributeTerms;
-  "productAttributeValues": productAttributeValues;
-  "productAttributes": productAttributes;
-  "productCategories": productCategories;
-  "productCategory": productCategory;
-  "productTaxRules": productTaxRules;
-  "productVariations": productVariations;
-  "products": products;
-  "rateLimit": rateLimit;
-  "registers": registers;
-  "reviews": reviews;
-  "sections": sections;
-  "session": session;
-  "sharedProduct": sharedProduct;
-  "sharedProductMapping": sharedProductMapping;
-  "sharedVariationMapping": sharedVariationMapping;
-  "shipments": shipments;
-  "shippingMethods": shippingMethods;
-  "stores": stores;
-  "subscription": subscription;
-  "supplierCart": supplierCart;
-  "supplierCartProducts": supplierCartProducts;
-  "supplierOrders": supplierOrders;
-  "suppliers": suppliers;
-  "tags": tags;
-  "taxRules": taxRules;
-  "team": team;
-  "telegramDedup": telegramDedup;
-  "tenant": tenant;
-  "ticketMessageReceipts": ticketMessageReceipts;
-  "ticketMessages": ticketMessages;
-  "ticketSupportGroups": ticketSupportGroups;
-  "ticketTags": ticketTags;
-  "tickets": tickets;
-  "tierPricingClients": tierPricingClients;
-  "tierPricingProducts": tierPricingProducts;
-  "tierPricingSteps": tierPricingSteps;
-  "tierPricings": tierPricings;
-  "user": user;
-  "userFeeRates": userFeeRates;
-  "userInvoices": userInvoices;
-  "verification": verification;
-  "warehouse": warehouse;
-  "warehouseShareLink": warehouseShareLink;
-  "warehouseShareRecipient": warehouseShareRecipient;
-  "warehouseStock": warehouseStock;
+  createdAt?: string;
+  updatedAt?: string;
+  affiliateProductId?: string;
+  affiliateVariationId?: string;
 }

@@ -65,8 +65,8 @@ export function StockManagement({
     next[warehouseId][country] = isBlank
       ? NaN
       : Number.isFinite(parsed)
-      ? Math.max(0, parsed)
-      : NaN;
+        ? Math.max(0, parsed)
+        : NaN;
 
     onStockChange(next);
   };

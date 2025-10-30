@@ -39,7 +39,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { PageHeader } from "@/components/page-header";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 type InventoryCountRow = {
@@ -52,6 +51,11 @@ type InventoryCountRow = {
 };
 import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 // Create an inline Web Worker that holds the dataset and performs filtering + paging off-thread.
 // No external files or deps; works in Next.js client components.
@@ -102,6 +106,11 @@ function createInventoryFilterWorker(): { worker: Worker; url: string } {
 
 export default function Component() {
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle()
+
+  useEffect(() => {
+    setHeaderTitle("Stock management") // Set the header title for this page
+  }, [setHeaderTitle])
   // org  permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
@@ -497,47 +506,61 @@ export default function Component() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Page title + actions */}
-      <PageHeader
-        title="Inventory count"
-        description="Count your inventory and get a detailed report"
-        actions={
-          canUpdate ? (
-            <div className="flex items-center gap-2">
-              <Button asChild className="flex items-center gap-2">
-                <Link href="/inventory/new">
-                  <Plus className="h-4 w-4" />
-                  Add New Count
-                </Link>
-              </Button>
-            </div>
-          ) : null
-        }
-      />
-
-
-      <div className="flex items-center space-x-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search inventory counts..."
-            value={searchTerm}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            className="pl-8"
-            aria-label="Search inventory counts"
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Inventory count"
+              description="Count your inventory and get a detailed report"
+            />
+          </div>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About inventory count"
+            tooltip="What is inventory counting?"
+            content={
+              <>
+                <p>
+                  <strong>Inventory counting</strong> allows you to physically verify product quantities and compare them with the system records to ensure accuracy.
+                </p>
+                <p>
+                  This process helps identify discrepancies, prevent stock errors, and maintain reliable inventory data across your warehouses and locations. After completing a count, you’ll receive a detailed report showing differences and adjustments.
+                </p>
+                <p>
+                  In the table below, you can view past inventory counts, check results, and start new counting sessions. Click the <strong>+</strong> button to launch a new inventory count and record quantities as you go.
+                </p>
+              </>
+            }
           />
+        </div>
+        <div className="flex items-center gap-2">
+          {
+            canUpdate ? (
+              <div className="flex items-center gap-2">
+                <Button asChild className="flex items-center gap-2">
+                  <Link href="/inventory/new">
+                    <Plus className="h-4 w-4" />
+                    Add New Count
+                  </Link>
+                </Button>
+              </div>
+            ) : null
+          }
         </div>
       </div>
 
-      {/* Error banner (optional) */}
-      {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      <div className="flex items-center gap-2 w-100">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Search inventory counts..."
+          value={searchTerm}
+          onChange={(e) => handleSearchChange(e.target.value)}
+          className="pl-8"
+          aria-label="Search inventory counts"
+        />
+      </div>
 
-      {/* Standard Data Table (no Card wrapper) */}
       <StandardDataTable
         table={table}
         columns={columns}
@@ -545,6 +568,12 @@ export default function Component() {
         skeletonRows={8}
         emptyMessage={workerReady ? "No inventory counts found" : "Loading…"}
       />
+
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* Pagination */}
       {filteredCount > 0 && totalPages > 1 && (

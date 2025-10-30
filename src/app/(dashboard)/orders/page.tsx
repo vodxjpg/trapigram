@@ -56,7 +56,11 @@ import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 // TanStack table + standardized renderer
 import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 /* ------------------------------------------------------------------ */
 /*  Types & constants                                                 */
@@ -526,16 +530,34 @@ export default function OrdersPage() {
   /*  JSX (filters without cards, standardized data table)              */
   /* ------------------------------------------------------------------ */
   return (
-    <div className="container mx-auto py-8 px-4 space-y-6">
-      {/* Page heading */}
-      <div>
-        <h1 className="text-3xl font-bold">Orders</h1>
-        <p className="text-muted-foreground mt-1">
-          Manage and track all customer orders
-        </p>
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Orders"
+              description="Manage and track all customer orders" />
+          </div>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About orders"
+            tooltip="What are orders?"
+            content={
+              <>
+                <p>
+                  <strong>Client orders</strong> represent the purchases your customers make through your sales channels, whether online, in-store, or through your internal ordering tools.
+                </p>
+                <p>
+                  This view allows you to track order details, payment status, fulfillment progress, and customer information. You can also update order status, manage shipments, and review order history to ensure smooth processing.
+                </p>
+                <p>
+                  In the table below, you can view, edit, or manage client orders.
+                </p>
+              </>
+            }
+          />
+        </div>
       </div>
-
-      {/* Filters (no card, no title) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Search */}
         <div className="relative">
@@ -616,7 +638,6 @@ export default function OrdersPage() {
           </Popover>
         )}
       </div>
-
       {/* Standardized table (no card) */}
       <StandardDataTable<Order>
         table={table}
@@ -625,8 +646,6 @@ export default function OrdersPage() {
         emptyMessage="No orders found matching your filters"
         skeletonRows={8}
       />
-
-      {/* Pagination controls */}
       <div className="flex items-center justify-between p-2">
         <div>
           Showing{" "}

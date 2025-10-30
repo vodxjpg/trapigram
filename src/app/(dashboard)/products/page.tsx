@@ -16,7 +16,6 @@ import {
   ProductsDataTable,
   type Product,
 } from "./components/products-data-table";
-import { PageHeader } from "@/components/page-header";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { toast } from "sonner";
@@ -27,6 +26,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 type OrderField = "createdAt" | "updatedAt" | "title" | "sku";
 type OrderDir = "asc" | "desc";
@@ -42,6 +46,11 @@ type ExportQuery = {
 
 export default function ProductsPage() {
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle()
+
+  useEffect(() => {
+    setHeaderTitle("Products") // Set the header title for this page
+  }, [setHeaderTitle])
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -209,7 +218,75 @@ export default function ProductsPage() {
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
-      {/* Hidden file input */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Products"
+              description="Manage your product catalog"
+            />
+          </div>
+
+          <InfoHelpDialog
+            title="About products"
+            tooltip="What are products?"
+            content={
+              <>
+                <p>
+                  <strong>Products</strong> are the items you sell through your stores or online channels. Each product includes details like title, SKU, price, and stock.
+                </p>
+                <p>
+                  From this view, you can add new products manually, or use the import and export options to manage them in bulk with <strong>.xlsx</strong> files.
+                </p>
+                <p>
+                  In the table below, you can review, edit, or delete products. Click the <strong>+</strong> button to create a new one, or use the import button to upload multiple at once.
+                </p>
+              </>
+            }
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          {canCreateProducts && (
+            <Button
+              variant="outline"
+              onClick={openImportModal}
+              disabled={isImporting}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Import
+            </Button>
+          )}
+          {canCreateProducts && (
+            <Button
+              variant="outline"
+              onClick={handleExport}
+              disabled={isExporting}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {isExporting ? "Exporting..." : "Export"}
+            </Button>
+          )}
+          {canCreateProducts && (
+            <Button onClick={handleCreateProduct} disabled={isLoading}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Product
+            </Button>
+          )}
+        </div>
+      </div>
+      <Suspense fallback={<div>Loading products table...</div>}>
+        <ProductsDataTable
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          onProductsLoaded={handleProductsLoaded}
+          // 👇 NEW: lift query/sort state up
+          onQueryStateChange={handleQueryStateChange}
+        />
+      </Suspense>
+
       <Input
         ref={fileInputRef}
         id="file-upload"
@@ -283,11 +360,10 @@ export default function ProductsPage() {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${
-                  importMessage.startsWith("✅")
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
+                  ? "text-green-600"
+                  : "text-red-600"
+                  }`}
               >
                 {importMessage}
               </p>
@@ -309,53 +385,6 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
-
-      <PageHeader
-        title="Products"
-        description="Manage your product catalog"
-        actions={
-          <div className="flex items-center gap-2">
-            {canCreateProducts && (
-              <Button
-                variant="outline"
-                onClick={openImportModal}
-                disabled={isImporting}
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Import
-              </Button>
-            )}
-            {canCreateProducts && (
-              <Button
-                variant="outline"
-                onClick={handleExport}
-                disabled={isExporting}
-              >
-                <Download className="mr-2 h-4 w-4" />
-                {isExporting ? "Exporting..." : "Export"}
-              </Button>
-            )}
-            {canCreateProducts && (
-              <Button onClick={handleCreateProduct} disabled={isLoading}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Product
-              </Button>
-            )}
-          </div>
-        }
-      />
-
-      <Suspense fallback={<div>Loading products table...</div>}>
-        <ProductsDataTable
-          page={page}
-          pageSize={pageSize}
-          onPageChange={setPage}
-          onPageSizeChange={setPageSize}
-          onProductsLoaded={handleProductsLoaded}
-          // 👇 NEW: lift query/sort state up
-          onQueryStateChange={handleQueryStateChange}
-        />
-      </Suspense>
     </div>
   );
 }

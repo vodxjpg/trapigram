@@ -29,6 +29,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+import { PageHeader } from "@/components/page-header";
+
 /* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -64,11 +66,12 @@ export default function TicketsPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-bold tracking-tight">Tickets</h1>
 
           {/* Shortened helper with tooltip + dialog for “learn more” (Telegram groups) */}
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <p>Manage your customer support tickets</p>
+          <div className="flex items-center gap-2">
+            <PageHeader
+              title="Tickets"
+              description="MManage your customer support tickets" />
 
             <Dialog>
               <TooltipProvider>

@@ -32,10 +32,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
+
 /* -------------------------------------------------------------------------- */
 
 export default function ClientsPage() {
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle()
+
+  useEffect(() => {
+    setHeaderTitle("Clients") // Set the header title for this page
+  }, [setHeaderTitle])
 
   /* ── active organisation → id for permission hook ────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
@@ -196,11 +206,32 @@ export default function ClientsPage() {
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Clients</h1>
-          <p className="text-muted-foreground">Manage your client database</p>
-        </div>
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Categories"
+              description="Manage your product categories and their organization." />
+          </div>
 
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About clients"
+            tooltip="What are clients?"
+            content={
+              <>
+                <p>
+                  <strong>Clients</strong> represent the customers you sell to. These may be retail buyers, wholesale accounts, or recurring business customers who purchase products or services from you.
+                </p>
+                <p>
+                  Managing clients allows you to store contact details, purchase history, and account information. This helps you provide better service, track sales performance, and build long-term business relationships.
+                </p>
+                <p>
+                  In the table below, you can view, edit, or delete client profiles. Click the <strong>+</strong> button to add a new client and begin tracking their orders and account activity.
+                </p>
+              </>
+            }
+          />
+        </div>
         <div className="flex items-center gap-2">
           {canForceAll && (
             <Button variant="outline" onClick={() => setDrawerOpen(true)}>

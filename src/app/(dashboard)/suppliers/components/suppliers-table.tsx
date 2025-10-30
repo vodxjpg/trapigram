@@ -1,4 +1,4 @@
-// Component: SuppliersView (updated to use StandardDataTable)
+// Component: SuppliersView (updated to place "New Supplier" on the search row)
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -294,119 +294,11 @@ export function SuppliersView() {
   });
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Page header + Create */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Suppliers</h1>
-        <Sheet
-          open={isSheetOpen}
-          onOpenChange={(open) => {
-            setIsSheetOpen(open);
-            if (!open) setEditingId(null);
-          }}
-        >
-          <SheetTrigger asChild>
-            <Button onClick={openCreate} className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              New Supplier
-            </Button>
-          </SheetTrigger>
-          <SheetContent
-            side="right"
-            className="w-[92vw] sm:w-[560px] md:w-[680px] lg:w-[760px] p-6 sm:p-8"
-          >
-            <SheetHeader>
-              <SheetTitle>
-                {isEditing ? "Edit Supplier" : "Create New Supplier"}
-              </SheetTitle>
-            </SheetHeader>
-
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="code">Code</Label>
-                <Input
-                  id="code"
-                  placeholder="Leave empty for auto-generation"
-                  value={formData.code}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, code: e.target.value }))
-                  }
-                />
-                {!isEditing && !formData.code && (
-                  <p className="text-sm text-muted-foreground">
-                    Will be auto-generated
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="name">Name *</Label>
-                <Input
-                  id="name"
-                  placeholder="Supplier name"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, name: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="supplier@example.com"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone (Optional)</Label>
-                <Input
-                  id="phone"
-                  placeholder="+1-555-0123"
-                  value={formData.phone}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, phone: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button
-                  onClick={() => {
-                    setIsSheetOpen(false);
-                    setEditingId(null);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2 bg-transparent"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Back
-                </Button>
-                <Button
-                  onClick={handleSave}
-                  className="flex items-center gap-2 flex-1"
-                  disabled={saving}
-                >
-                  <Save className="h-4 w-4" />
-                  {isEditing ? "Update" : "Save"}
-                </Button>
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      {/* Header row + search */}
+    <div className="space-y-4">
+      {/* Header row + search + New Supplier button (moved here) */}
       <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Supplier Management</h2>
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-sm">
+        <div className="flex items-center gap-4 justify-between">
+          <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
             <Input
               placeholder="Search suppliers..."
@@ -418,6 +310,110 @@ export function SuppliersView() {
               className="pl-10"
             />
           </div>
+
+          {/* New Supplier (Sheet) aligned to the end of the same row */}
+          <Sheet
+            open={isSheetOpen}
+            onOpenChange={(open) => {
+              setIsSheetOpen(open);
+              if (!open) setEditingId(null);
+            }}
+          >
+            <SheetTrigger asChild>
+              <Button onClick={openCreate} className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                New Supplier
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="right"
+              className="w-[92vw] sm:w-[560px] md:w-[680px] lg:w-[760px] p-6 sm:p-8"
+            >
+              <SheetHeader>
+                <SheetTitle>
+                  {isEditing ? "Edit Supplier" : "Create New Supplier"}
+                </SheetTitle>
+              </SheetHeader>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="code">Code</Label>
+                  <Input
+                    id="code"
+                    placeholder="Leave empty for auto-generation"
+                    value={formData.code}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, code: e.target.value }))
+                    }
+                  />
+                  {!isEditing && !formData.code && (
+                    <p className="text-sm text-muted-foreground">
+                      Will be auto-generated
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name *</Label>
+                  <Input
+                    id="name"
+                    placeholder="Supplier name"
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, name: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="supplier@example.com"
+                    value={formData.email}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone (Optional)</Label>
+                  <Input
+                    id="phone"
+                    placeholder="+1-555-0123"
+                    value={formData.phone}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, phone: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    onClick={() => {
+                      setIsSheetOpen(false);
+                      setEditingId(null);
+                    }}
+                    variant="outline"
+                    className="flex items-center gap-2 bg-transparent"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back
+                  </Button>
+                  <Button
+                    onClick={handleSave}
+                    className="flex items-center gap-2 flex-1"
+                    disabled={saving}
+                  >
+                    <Save className="h-4 w-4" />
+                    {isEditing ? "Update" : "Save"}
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 

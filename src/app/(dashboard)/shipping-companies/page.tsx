@@ -4,9 +4,13 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ShippingMethodsTable } from "./components/shipping-companies-table";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 export default function ShippingCompaniesPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -39,11 +43,32 @@ export default function ShippingCompaniesPage() {
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold tracking-tight">Shipping Companies</h1>
-        <p className="text-muted-foreground">
-          Manage your Shipping Companies.
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Shipping Companies"
+              description="Manage your Shipping Companies." />
+          </div>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About shipping companies"
+            tooltip="What are shipping companies?"
+            content={
+              <>
+                <p>
+                  <strong>Shipping companies</strong> are the carriers that deliver your orders (e.g., DHL, DPD, UPS, Correos). Here you store their details, service levels, and tracking information used during fulfillment.
+                </p>
+                <p>
+                  Linking carriers to your shipping methods helps define pickup options, delivery times, and SLAs by country or region. You can also record account numbers, contact info, and tracking URL patterns for label generation and notifications.
+                </p>
+                <p>
+                  In the table below, you can create, edit, or delete shipping companies. Click the <strong>+</strong> button to add a new carrier and then assign it to your shipping methods or fulfillment workflows.
+                </p>
+              </>
+            }
+          />
+        </div>
       </div>
       <ShippingMethodsTable />
     </div>

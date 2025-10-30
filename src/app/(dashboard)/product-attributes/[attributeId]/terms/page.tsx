@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation"; // Import useRouter
-import { ArrowLeft } from "lucide-react"; // Import ArrowLeft icon
-import { Button } from "@/components/ui/button"; // Import Button
 import { TermTable } from "./components/term-table";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
+
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
 
 type Attribute = {
   id: string;
@@ -43,27 +45,34 @@ export default function AttributeTermsPage({ params }: { params: Promise<{ attri
   }, [attributeId, setHeaderTitle]);
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => router.push("/product-attributes")}
-          className="hover:bg-muted"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        {loading ? (
-          <h1 className="text-3xl font-bold tracking-tight">Loading...</h1>
-        ) : (
-          <h1 className="text-3xl font-bold tracking-tight">
-            Terms for {attribute?.name || "Unknown Attribute"}
-          </h1>
-        )}
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title={`Terms for ${attribute?.name || "Unknown Attribute"}`}
+              description="Manage terms for this attribute (e.g., Nike, Puma for Brand)." />
+          </div>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About attribute terms"
+            tooltip="What are attribute terms?"
+            content={
+              <>
+                <p>
+                  <strong>Attribute terms</strong> are the predefined values for a specific attribute. For example, for the <em>Brand</em> attribute you might create terms like <em>Nike</em> or <em>Puma</em>; for <em>Color</em>, terms like <em>Red</em> or <em>Blue</em>.
+                </p>
+                <p>
+                  Terms ensure consistency across your catalog and power filtering, search, and product variations. When you assign an attribute to a product, you’ll pick from these terms instead of typing free-form values.
+                </p>
+                <p>
+                  In the table below, you can create, edit, or delete terms for the selected attribute. Click the <strong>+</strong> button to add a new term, then use these terms when editing products or building variations.
+                </p>
+              </>
+            }
+          />
+        </div>
       </div>
-      <p className="text-muted-foreground">
-        Manage terms for this attribute (e.g., Nike, Puma for Brand).
-      </p>
       <TermTable attributeId={attributeId} />
     </div>
   );
