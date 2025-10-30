@@ -105,7 +105,7 @@ const ConditionsSchema = z
   })
   .partial();
 
-/** NEW: add cooldownDays to the form schema (only used for customer_inactive) */
+/** Repeat every N days for customer_inactive (optional for other events) */
 export const RuleSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional().nullable(),
@@ -140,7 +140,6 @@ export const RuleSchema = z.object({
   // multiple actions; they only carry data (couponId/productIds)
   actions: z.array(UiActionSchema).min(1, "Add at least one action"),
 
-  /** NEW: repeat every N days for customer_inactive; keep optional for other events */
   cooldownDays: z.coerce.number().int().min(1).optional(),
 });
 
@@ -360,12 +359,12 @@ export default function RuleForm({
     },
   });
 
-  // Field-array binding for actions
+  // Single, unified useFieldArray for actions (fixes duplicate hook error)
   const {
     fields: actionFields,
     append: appendAction,
-    remove: removeActionRHF,
-    update: updateActionRHF,
+    remove: removeAction,
+    update: updateAction,
     replace: replaceActions,
   } = useFieldArray({ control: form.control, name: "actions" });
 
@@ -562,29 +561,17 @@ export default function RuleForm({
     router.refresh();
   }
 
-  const {
-    fields: actionFields,
-    append: appendActionField,
-    remove: removeActionField,
-    update: updateActionField,
-  } = useFieldArray({ control: form.control, name: "actions" });
-
-  const updateAction = (idx: number, patch: Partial<ActionItem>) => {
+  const updateActionItem = (idx: number, patch: Partial<ActionItem>) => {
     const cur = (form.getValues(`actions.${idx}`) || {}) as ActionItem;
-    updateActionField(idx, { ...(cur as any), ...(patch as any) });
+    updateAction(idx, { ...(cur as any), ...(patch as any) });
     form.trigger("actions");
   };
 
-  const addAction = () => {
-    appendActionField({ type: "send_coupon", payload: {} } as any);
-  };
+  const addAction = () => appendAction({ type: "send_coupon", payload: {} } as any);
 
-  const removeAction = (idx: number) => {
-    if ((form.getValues("actions") || []).length <= 1) {
-      // keep at least one in create mode
-      if (mode === "create") return;
-    }
-    removeActionField(idx);
+  const removeActionItem = (idx: number) => {
+    if (mode === "create" && actionFields.length <= 1) return;
+    removeAction(idx);
   };
 
   return (
@@ -598,7 +585,7 @@ export default function RuleForm({
                 <Label htmlFor="name">Name</Label>
                 <Hint text="A short label you’ll recognize later in the rules list." />
               </div>
-              <Input id="name" {...form.register("name")} disabled={form.formState.isSubmitting} />
+              <Input id="name" {...form.register("name")} disabled={disabled} />
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -610,7 +597,7 @@ export default function RuleForm({
                 type="number"
                 min={0}
                 {...form.register("priority", { valueAsNumber: true })}
-                disabled={form.formState.isSubmitting}
+                disabled={disabled}
               />
             </div>
           </div>
@@ -620,7 +607,7 @@ export default function RuleForm({
               <Label htmlFor="description">Description</Label>
               <Hint text="Optional note for teammates. Customers never see this." />
             </div>
-            <Textarea id="description" rows={3} {...form.register("description")} disabled={form.formState.isSubmitting} />
+            <Textarea id="description" rows={3} {...form.register("description")} disabled={disabled} />
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
@@ -633,7 +620,7 @@ export default function RuleForm({
                 control={form.control}
                 name="event"
                 render={({ field }) => (
-                  <Select disabled={form.formState.isSubmitting} onValueChange={field.onChange} value={field.value}>
+                  <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select trigger" />
                     </SelectTrigger>
@@ -655,9 +642,9 @@ export default function RuleForm({
             <div className="flex items-end gap-2">
               <Switch
                 id="enabled"
-                checked={!!form.watch("enabled")}
+                checked={w.enabled}
                 onCheckedChange={(v) => form.setValue("enabled", v)}
-                disabled={form.formState.isSubmitting}
+                disabled={disabled}
               />
               <div className="flex items-center gap-2">
                 <Label htmlFor="enabled">Enabled</Label>
@@ -675,7 +662,7 @@ export default function RuleForm({
           </div>
           <div className="space-y-2">
             <RadioGroup
-              value={form.watch("runScope")}
+              value={w.runScope}
               onValueChange={(v) =>
                 form.setValue("runScope", v as "per_order" | "per_customer", { shouldDirty: true })
               }
@@ -685,14 +672,14 @@ export default function RuleForm({
                 <RadioGroupItem
                   value="per_order"
                   id="scope-order"
-                  disabled={form.formState.isSubmitting || (form.watch("event") ?? form.getValues("event")) === "customer_inactive"}
+                  disabled={disabled || (form.watch("event") ?? form.getValues("event")) === "customer_inactive"}
                 />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per order</span>
                     <Hint text="Runs once for each matching order." />
                   </div>
-                  {form.watch("event") === "customer_inactive" && (
+                  {currentEvent === "customer_inactive" && (
                     <p className="text-xs text-muted-foreground mt-1">
                       Not available for “customer inactive”.
                     </p>
@@ -701,7 +688,7 @@ export default function RuleForm({
               </label>
 
               <label className="flex items-start gap-3 rounded-xl border p-3">
-                <RadioGroupItem value="per_customer" id="scope-customer" disabled={form.formState.isSubmitting} />
+                <RadioGroupItem value="per_customer" id="scope-customer" disabled={disabled} />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per customer</span>
@@ -716,7 +703,7 @@ export default function RuleForm({
           </div>
 
           {/* Repeat cadence for customer_inactive */}
-          {form.watch("event") === "customer_inactive" && (
+          {currentEvent === "customer_inactive" && (
             <div className="grid gap-2 md:max-w-sm">
               <div className="flex items-center gap-2">
                 <Label htmlFor="cooldownDays">Repeat every (days)</Label>
@@ -728,16 +715,18 @@ export default function RuleForm({
                 min={1}
                 step={1}
                 value={
-                  Number.isFinite(Number(form.watch("cooldownDays"))) && Number(form.watch("cooldownDays")) > 0
-                    ? String(form.watch("cooldownDays"))
+                  Number.isFinite(Number(w.cooldownDays)) && Number(w.cooldownDays) > 0
+                    ? String(w.cooldownDays)
                     : "30"
                 }
                 onChange={(e) =>
-                  form.setValue("cooldownDays", Math.max(1, Math.floor(Number(e.target.value || 1))), {
-                    shouldDirty: true,
-                  })
+                  form.setValue(
+                    "cooldownDays",
+                    Math.max(1, Math.floor(Number(e.target.value || 1))),
+                    { shouldDirty: true }
+                  )
                 }
-                disabled={form.formState.isSubmitting}
+                disabled={disabled}
               />
               <p className="text-xs text-muted-foreground">
                 Default is 30 days. The background sweep enforces this via a per-rule per-customer lock.
@@ -753,18 +742,14 @@ export default function RuleForm({
             <Hint text="Extra filters the order/customer must pass." />
           </div>
 
-          <OrgCountriesSelect
-            value={form.watch("countries")}
-            onChange={(codes) => form.setValue("countries", codes)}
-            disabled={form.formState.isSubmitting}
-          />
+          <OrgCountriesSelect value={w.countries} onChange={(codes) => form.setValue("countries", codes)} disabled={disabled} />
 
           <ConditionsBuilder
-            value={(form.watch("conditions") ?? ({ op: "AND", items: [] } as ConditionsGroup)) as ConditionsGroup}
+            value={(w.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)) as ConditionsGroup}
             onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
-            disabled={form.formState.isSubmitting}
+            disabled={disabled}
             allowedKinds={allowedKinds}
-            ruleCountries={form.watch("countries")}
+            ruleCountries={w.countries}
           />
         </section>
 
@@ -779,9 +764,9 @@ export default function RuleForm({
               <Label>Channels</Label>
             </div>
             <ChannelsPicker
-              value={(form.watch("channels") as Channel[]) ?? []}
+              value={(w.channels as Channel[]) ?? []}
               onChange={(v) => form.setValue("channels", v)}
-              disabled={form.formState.isSubmitting}
+              disabled={disabled}
             />
           </div>
         </section>
@@ -793,7 +778,7 @@ export default function RuleForm({
               <h2 className="text-lg font-semibold">Actions</h2>
               <Hint text="Combine coupon and/or product recommendations, then reference them in the message body." />
             </div>
-            <Button type="button" onClick={addAction} disabled={form.formState.isSubmitting}>
+            <Button type="button" onClick={addAction} disabled={disabled}>
               + Add action
             </Button>
           </div>
@@ -815,12 +800,12 @@ export default function RuleForm({
                   <Select
                     value={(a as any).type ?? ""}
                     onValueChange={(v) =>
-                      updateAction(idx, {
+                      updateActionItem(idx, {
                         type: v as ActionItem["type"],
                         payload: {},
                       })
                     }
-                    disabled={form.formState.isSubmitting}
+                    disabled={disabled}
                   >
                     <SelectTrigger className="w-64">
                       <SelectValue />
@@ -828,7 +813,7 @@ export default function RuleForm({
                     <SelectContent>
                       <SelectItem value="send_coupon">Send coupon</SelectItem>
                       <SelectItem value="product_recommendation">Recommend product</SelectItem>
-                      {isOrderEvent(form.watch("event") ?? form.getValues("event")) && (
+                      {isOrderEvent(currentEvent) && (
                         <SelectItem value="multiply_points">Set points multiplier</SelectItem>
                       )}
                       <SelectItem value="award_points">Award fixed points</SelectItem>
@@ -839,8 +824,8 @@ export default function RuleForm({
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => removeAction(idx)}
-                      disabled={form.formState.isSubmitting || (mode === "create" && actionFields.length <= 1)}
+                      onClick={() => removeActionItem(idx)}
+                      disabled={disabled || (mode === "create" && actionFields.length <= 1)}
                     >
                       − Remove
                     </Button>
@@ -856,12 +841,12 @@ export default function RuleForm({
                     <CouponSelect
                       value={((a as any).payload?.couponId ?? null) as any}
                       onChange={(id) =>
-                        updateAction(idx, {
+                        updateActionItem(idx, {
                           payload: { ...(a as any).payload, couponId: id },
                         })
                       }
-                      ruleCountries={form.watch("countries")}
-                      disabled={form.formState.isSubmitting}
+                      ruleCountries={w.countries}
+                      disabled={disabled}
                     />
                     <p className="text-xs text-muted-foreground">
                       Will populate <code>{`{coupon}`}</code> in the message body.
@@ -879,35 +864,35 @@ export default function RuleForm({
                       <Input
                         type="number"
                         min={0.1}
-                        {...{ step: 0.1, inputMode: "decimal" as const }}
+                        {...numberInputStep01}
                         value={
                           Number.isFinite((a as any).payload?.factor)
                             ? (a as any).payload.factor
                             : ""
                         }
                         onChange={(e) =>
-                          updateAction(idx, {
+                          updateActionItem(idx, {
                             payload: {
                               ...(a as any).payload,
                               factor: Number(e.target.value || 0),
                             },
                           })
                         }
-                        disabled={form.formState.isSubmitting}
+                        disabled={disabled}
                         placeholder="e.g. 1.5"
                       />
                       <Input
                         placeholder="Optional description (internal)"
                         value={(a as any).payload?.description ?? ""}
                         onChange={(e) =>
-                          updateAction(idx, {
+                          updateActionItem(idx, {
                             payload: {
                               ...(a as any).payload,
                               description: e.target.value,
                             },
                           })
                         }
-                        disabled={form.formState.isSubmitting}
+                        disabled={disabled}
                       />
                     </div>
                   </div>
@@ -923,35 +908,35 @@ export default function RuleForm({
                       <Input
                         type="number"
                         min={0.1}
-                        {...{ step: 0.1, inputMode: "decimal" as const }}
+                        {...numberInputStep01}
                         value={
                           Number.isFinite((a as any).payload?.points)
                             ? (a as any).payload.points
                             : ""
                         }
                         onChange={(e) =>
-                          updateAction(idx, {
+                          updateActionItem(idx, {
                             payload: {
                               ...(a as any).payload,
                               points: Number(e.target.value || 0),
                             },
                           })
                         }
-                        disabled={form.formState.isSubmitting}
+                        disabled={disabled}
                         placeholder="e.g. 10 or 1.5"
                       />
                       <Input
                         placeholder="Optional description (internal)"
                         value={(a as any).payload?.description ?? ""}
                         onChange={(e) =>
-                          updateAction(idx, {
+                          updateActionItem(idx, {
                             payload: {
                               ...(a as any).payload,
                               description: e.target.value,
                             },
                           })
                         }
-                        disabled={form.formState.isSubmitting}
+                        disabled={disabled}
                       />
                     </div>
                   </div>
@@ -967,12 +952,12 @@ export default function RuleForm({
                       label="Products to recommend"
                       value={(Array.isArray((a as any).payload?.productIds) ? (a as any).payload.productIds : []) as string[]}
                       onChange={(ids) =>
-                        updateAction(idx, {
+                        updateActionItem(idx, {
                           payload: { ...(a as any).payload, productIds: ids },
                         })
                       }
-                      disabled={form.formState.isSubmitting}
-                      ruleCountries={form.watch("countries")}
+                      disabled={disabled}
+                      ruleCountries={w.countries}
                     />
                   </div>
                 )}
@@ -994,9 +979,9 @@ export default function RuleForm({
               <Hint text="Subject for email notifications. Telegram ignores this." />
             </div>
             <Input
-              value={form.watch("templateSubject") ?? ""}
+              value={w.templateSubject ?? ""}
               onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
-              disabled={form.formState.isSubmitting}
+              disabled={disabled}
             />
           </div>
 
@@ -1007,7 +992,7 @@ export default function RuleForm({
             </div>
             <ReactQuill
               theme="snow"
-              value={form.watch("templateMessage") ?? ""}
+              value={w.templateMessage ?? ""}
               onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
               modules={quillModules}
             />
@@ -1018,7 +1003,7 @@ export default function RuleForm({
         </section>
 
         <div className="flex gap-3">
-          <Button type="submit" disabled={form.formState.isSubmitting}>
+          <Button type="submit" disabled={disabled}>
             {mode === "create" ? "Create rule" : "Save changes"}
           </Button>
           <Button
@@ -1027,7 +1012,7 @@ export default function RuleForm({
             onClick={() => {
               history.length > 1 ? router.back() : router.push("/conditional-rules");
             }}
-            disabled={form.formState.isSubmitting}
+            disabled={disabled}
           >
             Cancel
           </Button>
