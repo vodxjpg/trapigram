@@ -586,6 +586,43 @@ export default function RuleForm({
     removeAction(idx);
   };
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Placeholders UI (chips + tooltips + copy-to-clipboard)
+  // ───────────────────────────────────────────────────────────────────────────
+  const PLACEHOLDERS: Array<{ token: string; tip: string }> = React.useMemo(
+    () => [
+      { token: "{customer_name}", tip: "Customer’s first name if known; otherwise blank." },
+      { token: "{coupon}", tip: "Selected coupon code injected by the rule." },
+      { token: "{recommended_products}", tip: "HTML list of recommended products." },
+    ],
+    []
+  );
+
+  const [copiedToken, setCopiedToken] = React.useState<string | null>(null);
+
+  const copyToClipboard = React.useCallback(async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopiedToken(text);
+      window.setTimeout(() => setCopiedToken(null), 1200);
+    } catch {
+      // Silently ignore; UX still functional.
+    }
+  }, []);
+
   return (
     <TooltipProvider delayDuration={150}>
       <form className="grid gap-6" onSubmit={form.handleSubmit(onSubmit)}>
@@ -938,7 +975,7 @@ export default function RuleForm({
           })}
         </section>
 
-        {/* Delivery — moved to sit ABOVE Message */}
+        {/* Delivery — ABOVE Message */}
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Delivery</h2>
@@ -956,13 +993,47 @@ export default function RuleForm({
           </div>
         </section>
 
-        {/* Shared Message — at the end for clarity */}
+        {/* Shared Message */}
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Message</h2>
-            <Hint text="One message for all selected actions. Placeholders: {coupon}, {recommended_products}." />
+            <Hint text="One message for all selected actions. Use placeholders to inject dynamic content." />
           </div>
 
+          {/* NEW: Placeholders (chips) */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Placeholders</Label>
+              <Hint text="Click any placeholder to copy it to your clipboard, then paste it into the Subject or Body." />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {PLACEHOLDERS.map(({ token, tip }) => (
+                <Tooltip key={token}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="font-mono"
+                      onClick={() => copyToClipboard(token)}
+                      aria-label={`Copy ${token}`}
+                    >
+                      {token}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="text-sm">{tip} · Click to copy</TooltipContent>
+                </Tooltip>
+              ))}
+              <span
+                aria-live="polite"
+                className="text-xs text-muted-foreground ml-2"
+              >
+                {copiedToken ? `Copied ${copiedToken}` : "\u00A0"}
+              </span>
+            </div>
+          </div>
+
+          {/* Subject */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Subject</Label>
@@ -972,13 +1043,15 @@ export default function RuleForm({
               value={w.templateSubject ?? ""}
               onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
               disabled={disabled}
+              placeholder="e.g. Hi {customer_name}, here’s a gift for you"
             />
           </div>
 
+          {/* Body */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Body (HTML)</Label>
-              <Hint text="Write your message with formatting. Use placeholders where needed." />
+              <Hint text="Write your message with formatting. Use the placeholders above as needed." />
             </div>
             <ReactQuill
               theme="snow"
@@ -987,7 +1060,8 @@ export default function RuleForm({
               modules={quillModules}
             />
             <p className="text-xs text-muted-foreground">
-              Placeholders: <code>{`{coupon}`}</code>, <code>{`{recommended_products}`}</code>
+              Available: <code>{`{customer_name}`}</code>, <code>{`{coupon}`}</code>,{" "}
+              <code>{`{recommended_products}`}</code>
             </p>
           </div>
         </section>
