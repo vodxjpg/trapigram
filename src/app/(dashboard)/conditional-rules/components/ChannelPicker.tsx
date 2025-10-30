@@ -1,3 +1,4 @@
+// src/app/(dashboard)/conditional-rules/components/ChannelPicker.tsx
 "use client";
 
 import { useMemo } from "react";

@@ -1,3 +1,4 @@
+// /src/app/(dashboard)/conditional-rules/new/page.tsx
 import RuleForm from "../components/RuleForm";
 
 export default function NewRulePage() {

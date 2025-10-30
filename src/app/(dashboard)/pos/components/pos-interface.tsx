@@ -63,7 +63,7 @@ type CartLine = {
 }
 
 const isStockError = (msg?: string | null) =>
-  !!msg && /insufficient stock|back-?orders?\s+are\s+disabled/i.test(msg || "")
+  !!msg && /insufficient stock|not enough stock|back-?orders?\s+are\s+disabled/i.test(msg || "")
 
 export function POSInterface() {
   // store/outlet
@@ -304,42 +304,37 @@ export function POSInterface() {
       .filter((x: any): x is string => !!x)
   }
 
-  // Soft parse of stock/backorder fields from API without placeholders
-  const parseAllowBackorder = (v: any, manageStock: boolean): boolean => {
-    if (!manageStock) return true // unmanaged ⇒ effectively unlimited
-    if (typeof v === "boolean") return v
-    if (v == null) return false
-    const s = String(v).toLowerCase()
-    // Woocommerce: "no" | "notify" | "yes"
-    return s === "yes" || s === "notify" || s === "allowed" || s === "true" || s === "1"
-  }
+  const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
-  // fetch products (flat variations) + stock
+  // fetch products (flat variations) + compute stock per POS country
   useEffect(() => {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
     if (debouncedSearch) params.set("search", debouncedSearch)
+    const country = resolveCartCountry()
+
     ;(async () => {
       try {
         const res = await fetch(`/api/products?${params}`).then(r => r.json())
         if (ignore) return
-        const flat = (res.productsFlat || []).map((p: any) => {
+
+        const flat: GridProduct[] = (res.productsFlat || []).map((p: any) => {
           const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
+          const manageStock = Boolean(p.manageStock)
+          let stockQty: number | null = null
 
-          // Try common field variants
-          const manageStock =
-            !!(p.manageStock ?? p.manage_stock ?? p.stockManaged ?? p.stock_management ?? false)
-          const rawQty =
-            p.stockQuantity ?? p.stock_quantity ?? p.qty ?? p.stock ?? (manageStock ? 0 : null)
+          if (manageStock) {
+            // Sum quantities for the POS country across all warehouses
+            const stockData = (p.stockData || {}) as Record<string, Record<string, number>>
+            let total = 0
+            for (const wh of Object.values(stockData)) {
+              const q = Number((wh as any)[country] ?? 0)
+              if (Number.isFinite(q)) total += q
+            }
+            stockQty = total
+          }
 
-          const stockQty = manageStock
-            ? (rawQty == null ? 0 : Number(rawQty) || 0)
-            : null // null === unlimited
-
-          const allowBackorder = parseAllowBackorder(
-            p.backorders ?? p.backorder ?? p.allowBackorders ?? p.backorder_allowed,
-            !!manageStock
-          )
+          const allowBackorder = Boolean(p.allowBackorders)
 
           return {
             id: String(p.id),
@@ -349,16 +344,19 @@ export function POSInterface() {
             image: p.image ?? null,
             categoryIds: normalizeCatIds(p),
             priceForDisplay: Number(price) || 0,
-            stockQty,                 // number | null (null = unlimited)
-            allowBackorder,           // boolean (true when unmanaged or explicitly allowed)
-            manageStock: !!manageStock
-          } as GridProduct
+            stockQty,               // number | null (null = unlimited/unmanaged)
+            allowBackorder,         // boolean
+            manageStock,            // boolean
+          }
         })
+
         setProducts(flat)
       } catch {/* ignore */ }
     })()
+
     return () => { ignore = true }
-  }, [debouncedSearch])
+  // re-map when country context changes too
+  }, [debouncedSearch, storeCountry, orgCountries])
 
   // DEFAULT: ensure Walk-in exists & selected
   useEffect(() => {
@@ -458,8 +456,6 @@ export function POSInterface() {
   }, [discountType, discountValue, subtotalEstimate])
   const totalEstimate = Math.max(0, +(subtotalEstimate - discountAmount).toFixed(2))
   const itemCount = useMemo(() => lines.reduce((n, l) => n + (l.quantity || 0), 0), [lines])
-
-  const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
   const titleFor = useCallback((pid: string, vid: string | null, fallback: string) => {
     const m = products.find(p => p.productId === pid && p.variationId === (vid ?? null));
@@ -694,7 +690,7 @@ export function POSInterface() {
         return products.find(x => x.productId === ids.productId && x.variationId === ids.variationId) || null
       })()
     if (!p) return true
-    if (p.stockQty == null) return true // unlimited/unmanaged
+    if (p.stockQty == null) return true // unmanaged ⇒ unlimited
     const shown = shownQtyByKey.get(key) ?? 0
     if (shown < p.stockQty) return true
     return !!p.allowBackorder
@@ -759,14 +755,9 @@ export function POSInterface() {
         if (!ok && !stockHit) setError(j?.error || "Failed to add to cart")
       } catch { ok = false }
 
-      if (!ok && !stockHit) {
-        // non-stock error already reported above; refresh to re-sync
-        entry.inflightQty = 0
-        if (cid) await refreshCart(cid, seq)
-      }
-
-      // Reduce outstanding *before* composing to avoid double-count
+      // Reduce outstanding first to avoid double counting
       entry.inflightQty = 0
+
       if (linesPayload) applyServerCart(linesPayload, seq)
       else if (cid) await refreshCart(cid, seq)
 
@@ -775,7 +766,7 @@ export function POSInterface() {
         toast.error(msg)
       }
 
-      scheduleReconcile(cid!)
+      if (cid) scheduleReconcile(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
       entry.inflightQty = 0
@@ -1039,7 +1030,7 @@ export function POSInterface() {
             />
           </div>
 
-        {/* Cart sidebar (desktop / landscape) */}
+          {/* Cart sidebar (desktop / landscape) */}
           <div className="hidden lg:flex">
             <Cart
               variant="inline"

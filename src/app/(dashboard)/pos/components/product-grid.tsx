@@ -150,18 +150,26 @@ export function ProductGrid({ products, onAddToCart, addingKeys, shownQtyByKey }
                   </div>
 
                   {product.manageStock && (
-                    <span className={cn(
-                      "rounded px-1.5 py-0.5",
-                      product.stockQty == null ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                      : remain === 0
-                        ? (product.allowBackorder
-                            ? "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-                            : "bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300")
-                        : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                    )}>
-                      {product.stockQty == null
-                        ? "∞"
-                        : remain}
+                    <span
+                      className={cn(
+                        "rounded px-1.5 py-0.5",
+                        product.stockQty == null
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                          : remain === 0
+                          ? (canBackorder
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                              : "bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300")
+                          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                      )}
+                      title={
+                        product.stockQty == null
+                          ? "Stock unmanaged (∞)"
+                          : canBackorder
+                          ? "No stock, back-orders allowed"
+                          : `${remain} available`
+                      }
+                    >
+                      {product.stockQty == null ? "∞" : remain}
                     </span>
                   )}
                 </div>

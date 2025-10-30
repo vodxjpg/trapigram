@@ -1,3 +1,4 @@
+// /src/app/(dashboard)/conditional-rules/components/RuleFormLoader.tsx
 "use client";
 
 import { useEffect, useState } from "react";

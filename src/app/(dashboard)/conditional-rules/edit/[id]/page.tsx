@@ -1,4 +1,4 @@
-// (where this file lives under .../[id]/page.tsx)
+// /src/app/(dashboard)/conditional-rules/edit/[id]/page.tsx
 import { notFound } from "next/navigation";
 import RuleFormLoader from "../../components/RuleFormLoader";
 

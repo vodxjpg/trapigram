@@ -2,6 +2,7 @@
 import { pgPool as pool } from "@/lib/db";
 import { sendNotification, type NotificationChannel } from "@/lib/notifications";
 import { v4 as uuidv4 } from "uuid";
+
 type EventType =
   | "order_placed"
   | "order_pending_payment"
@@ -34,7 +35,7 @@ type ConditionsGroup = {
   op: "AND" | "OR";
   items: Array<
     | { kind: "contains_product"; productIds: string[] }
-    | { kind: "order_total_gte_eur"; amount: number }
+    | { kind: "order_total_gte"; amount: number }
     | { kind: "no_order_days_gte"; days: number }
   >;
 };
@@ -42,7 +43,7 @@ type ConditionsGroup = {
 type RunScope = "per_order" | "per_customer";
 
 const EURO_COUNTRIES = new Set([
-  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
+  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
 ]);
 
 function currencyFromCountry(c: string) {
@@ -84,13 +85,13 @@ async function getOrderEURTotal(orderId: string): Promise<number | null> {
   return Number.isFinite(v) ? v : 0;
 }
 
-// add this robust fallback (NEW)
+// Robust normalized total in EUR (internal); used for order_total_gte comparisons.
 async function getOrderEURTotalRobust(orderId: string): Promise<number | null> {
   // 1) try revenue first
   const fromRevenue = await getOrderEURTotal(orderId);
   if (fromRevenue != null) return fromRevenue;
 
-  // 2) fallback: compute from orders.totalAmount  FX
+  // 2) fallback: compute from orders.totalAmount with FX
   const { rows: orows } = await pool.query(
     `SELECT totalAmount::numeric AS total, country
        FROM orders
@@ -104,18 +105,17 @@ async function getOrderEURTotalRobust(orderId: string): Promise<number | null> {
   const country = String(orows[0].country ?? "");
   if (!Number.isFinite(total)) return null;
 
-  // latest FX
+  // latest FX (row stores USD→EUR and USD→GBP factors)
   const { rows: fxRows } = await pool.query(
     `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`
   );
-  const USDEUR = Number(fxRows?.[0]?.EUR ?? 1) || 1; // safe fallbacks
+  const USDEUR = Number(fxRows?.[0]?.EUR ?? 1) || 1;
   const USDGBP = Number(fxRows?.[0]?.GBP ?? 1) || 1;
 
   const cur = currencyFromCountry(country);
   if (cur === "EUR") return total;
   if (cur === "GBP") return total * (USDEUR / USDGBP); // GBP→USD→EUR
-  // USD default
-  return total * USDEUR;
+  return total * USDEUR; // USD default
 }
 
 /**
@@ -173,10 +173,9 @@ async function appendOrderAutomationEvent(opts: {
     meta = typeof raw === "string" ? JSON.parse(raw) : (raw ?? {});
   } catch { meta = {}; }
 
-  // ✅ Normalize: ensure a plain object; arrays drop props on JSON.stringify
+  // Normalize container
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) meta = {};
 
-  // Get/create automation root (must also be a plain object)
   const automationRoot = (meta as any).automation;
   const automation =
     automationRoot && typeof automationRoot === "object" && !Array.isArray(automationRoot)
@@ -187,7 +186,6 @@ async function appendOrderAutomationEvent(opts: {
   events.push(entry);
   (automation as any).events = events;
 
-  // Keep a convenience max for quick reads during spending awards
   if (entry?.event === "points_multiplier" && typeof entry.factor === "number") {
     const prevMax = Math.max(
       1,
@@ -203,7 +201,6 @@ async function appendOrderAutomationEvent(opts: {
     `UPDATE orders SET "orderMeta" = $3, "updatedAt" = NOW() WHERE id = $1 AND "organizationId" = $2`,
     [orderId, organizationId, JSON.stringify(meta)],
   );
-
 }
 
 /* Affiliate points helpers (same semantics as /api/affiliate/points) */
@@ -224,18 +221,36 @@ async function applyBalanceDelta(
   );
 }
 
+async function getClientName(
+  organizationId: string,
+  clientId: string | null
+): Promise<string | null> {
+  if (!clientId) return null;
+  const { rows } = await pool.query(
+    `SELECT "firstName","lastName"
+       FROM "clients"
+      WHERE "organizationId" = $1 AND id = $2
+      LIMIT 1`,
+    [organizationId, clientId],
+  );
+  const fn = rows[0]?.firstName ? String(rows[0].firstName) : "";
+  const ln = rows[0]?.lastName ? String(rows[0].lastName) : "";
+  const full = `${fn} ${ln}`.trim();
+  return full || null;
+}
+
 function evalConditions(
   grp: ConditionsGroup | undefined,
   ctx: {
     hasProduct: (ids: string[]) => boolean;
-    eurTotal: number | null;
+    eurTotal: number | null;            // internal normalized total (EUR)
     daysSinceLastOrder: number | null;
   },
 ): boolean {
   if (!grp || !Array.isArray(grp.items) || !grp.items.length) return true; // no conditions = pass
   const evalOne = (c: ConditionsGroup["items"][number]) => {
     if (c.kind === "contains_product") return ctx.hasProduct(c.productIds || []);
-    if (c.kind === "order_total_gte_eur") {
+    if (c.kind === "order_total_gte") {
       if (ctx.eurTotal == null) return false;
       return ctx.eurTotal >= (Number(c.amount) || 0);
     }
@@ -252,17 +267,328 @@ function evalConditions(
   return grp.op === "OR" ? grp.items.some(evalOne) : grp.items.every(evalOne);
 }
 
+/* -------------------------- scope & dedupe locking ------------------------- */
+
+function resolveScope(event: EventType, payload: any): RunScope {
+  // UI may send payload.scope; default logic here for safety:
+  // - customer_inactive can only be per_customer
+  // - order_* default per_order
+  const uiScope = payload?.scope as RunScope | undefined;
+  if (event === "customer_inactive") return "per_customer";
+  return uiScope === "per_customer" ? "per_customer" : "per_order";
+}
+
+/**
+ * Try to acquire a one-time lock so the rule fires only once per scope.
+ * We key by a synthetic dedupeKey and rely on a UNIQUE index.
+ *
+ * - per_order:    rule:<ruleId>:order:<orderId>
+ * - per_customer: rule:<ruleId>:client:<clientId>
+ */
+async function tryAcquireRuleLock(opts: {
+  organizationId: string;
+  ruleId: string;
+  event: EventType;
+  scope: RunScope;
+  clientId: string | null;
+  orderId: string | null;
+}): Promise<boolean> {
+  const { organizationId, ruleId, event, scope, clientId, orderId } = opts;
+
+  if (scope === "per_order" && !orderId) return false;
+  if (scope === "per_customer" && !clientId) return false;
+
+  const dedupeKey =
+    scope === "per_order"
+      ? `rule:${ruleId}:order:${orderId}`
+      : `rule:${ruleId}:client:${clientId}`;
+
+  const { rowCount } = await pool.query(
+    `
+    INSERT INTO "automationRuleLocks"
+      ("organizationId","ruleId","event","clientId","orderId","dedupeKey","createdAt")
+    VALUES ($1,$2,$3,$4,$5,$6,NOW())
+    ON CONFLICT ("organizationId","dedupeKey") DO NOTHING
+  `,
+    [organizationId, ruleId, event, clientId, orderId, dedupeKey],
+  );
+
+  return rowCount > 0;
+}
+
+/* ----------------------------- main processor ---------------------------- */
+
+export async function processAutomationRules(opts: {
+  organizationId: string;
+  event: EventType;
+  country?: string | null;
+  variables?: Record<string, string>;
+  orderCurrency?: string | null; // kept for callers; not used here directly
+  clientId?: string | null;
+  userId?: string | null;
+  orderId?: string | null;
+  url?: string | null;
+  /** optional: run only a subset of rule IDs (e.g., sweep matched) */
+  onlyRuleIds?: string[] | null;
+}) {
+  const {
+    organizationId,
+    event,
+    country = null,
+    variables = {},
+    clientId = null,
+    userId = null,
+    url = null,
+    orderId = null,
+    onlyRuleIds = null,
+  } = opts;
+
+  // Pull enabled rules for this event, ordered by priority.
+  const res = await pool.query(
+    `
+    SELECT id,"organizationId",name,enabled,priority,event,
+           countries,action,channels,payload
+      FROM "automationRules"
+     WHERE "organizationId" = $1
+       AND event = $2
+       AND enabled = TRUE
+     ORDER BY priority ASC, "createdAt" DESC
+    `,
+    [organizationId, event],
+  );
+
+  // Context values available for conditions.
+  const productIdsInOrder = orderId ? await getOrderProductIds(orderId) : [];
+  const eurTotal = orderId ? await getOrderEURTotalRobust(orderId) : null; // internal normalized
+  const daysSinceLastOrder = await getDaysSinceLastPaidOrCompletedOrder(
+    organizationId,
+    clientId ?? null,
+  );
+
+  // Optional customer name for placeholders
+  const customerName = await getClientName(organizationId, clientId ?? null);
+
+  // Prepare name-related placeholders once
+  const baseReplacements: Record<string, string> = {};
+  if (customerName) {
+    const esc = escapeHtml(customerName);
+    baseReplacements.customer_name = esc;
+    baseReplacements.customer_name_with_comma = `, ${esc}`;
+    baseReplacements.customer_name_prefix = `${esc}, `;
+  } else {
+    baseReplacements.customer_name = "";
+    baseReplacements.customer_name_with_comma = "";
+    baseReplacements.customer_name_prefix = "";
+  }
+
+  for (const raw of res.rows as RuleRow[]) {
+    if (onlyRuleIds && onlyRuleIds.length && !onlyRuleIds.includes(raw.id)) {
+      continue;
+    }
+
+    let countries: string[] = [];
+    try {
+      countries = Array.isArray((raw as any).countries)
+        ? (raw as any).countries
+        : JSON.parse(raw.countries || "[]");
+    } catch { countries = []; }
+
+    if (countries.length && (!country || !countries.includes(country))) continue;
+
+    let channels: NotificationChannel[] = [];
+    try {
+      channels = Array.isArray((raw as any).channels)
+        ? ((raw as any).channels as NotificationChannel[])
+        : JSON.parse(raw.channels || "[]");
+    } catch { channels = []; }
+
+    const payload =
+      typeof raw.payload === "string"
+        ? (JSON.parse(raw.payload || "{}") as any)
+        : (raw.payload ?? {});
+
+    const conditions: ConditionsGroup | undefined = payload?.conditions;
+
+    const match = evalConditions(conditions, {
+      hasProduct: (ids) => ids.some((id) => productIdsInOrder.includes(id)),
+      eurTotal,
+      daysSinceLastOrder,
+    });
+    if (!match) continue;
+
+    // Determine dedupe scope.
+    const scope = resolveScope(raw.event, payload);
+
+    // For customer_inactive, DO NOT acquire the permanent dedupe lock.
+    // Repetition is governed by the sweep using ruleEngagement.lockUntil.
+    if (raw.event !== "customer_inactive") {
+      const acquired = await tryAcquireRuleLock({
+        organizationId,
+        ruleId: raw.id,
+        event: raw.event,
+        scope,
+        clientId: clientId ?? null,
+        orderId: orderId ?? null,
+      });
+      if (!acquired) continue; // already fired for this scope
+    }
+
+    // subject/message setup
+    const ruleLabel = raw.name || "Automation rule";
+    const nowIso = new Date().toISOString();
+
+    let subject: string | undefined = payload.templateSubject || undefined;
+    let message: string = payload.templateMessage || "";
+
+    // Build placeholder map depending on rule mode
+    const replacements: Record<string, string> = { ...baseReplacements };
+    const vars: Record<string, string> = { ...(variables || {}) };
+    if (customerName && !vars.customer_name) vars.customer_name = customerName;
+
+    if (raw.action === "multi") {
+      const acts: Array<{ type: string; payload?: any }> =
+        Array.isArray(payload.actions) ? payload.actions : [];
+
+      // send_coupon (within multi)
+      const couponAct = acts.find((a) => a.type === "send_coupon");
+      if (couponAct?.payload?.couponId) {
+        const code = await getCouponCode(organizationId, couponAct.payload.couponId);
+        if (code) replacements.coupon = `<code>${escapeHtml(code)}</code>`;
+        if (!vars.coupon_id) vars.coupon_id = String(couponAct.payload.couponId);
+      } else {
+        replacements.coupon = replacements.coupon ?? "";
+      }
+
+      // product_recommendation (within multi)
+      const prodAct = acts.find((a) => a.type === "product_recommendation");
+      const ids: string[] = Array.isArray(prodAct?.payload?.productIds) ? prodAct.payload.productIds : [];
+      if (ids.length) {
+        const titles = await getProductTitles(organizationId, ids);
+        const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
+        replacements.selected_products = listHtml;
+        replacements.recommended_products = listHtml; // back-compat
+        if (!vars.product_ids) vars.product_ids = ids.join(",");
+      } else {
+        replacements.selected_products = "";
+        replacements.recommended_products = "";
+      }
+
+      // multiply_points → set per-order multiplier (order_* only)
+      for (const a of acts.filter((x) => x.type === "multiply_points")) {
+        if (!orderId) continue;
+        const factorRaw = Number((a as any)?.payload?.factor ?? 0);
+        if (Number.isFinite(factorRaw) && factorRaw > 0) {
+          await appendOrderAutomationEvent({
+            organizationId,
+            orderId,
+            entry: {
+              event: "points_multiplier",
+              factor: factorRaw,
+              ruleId: raw.id,
+              label: ruleLabel,
+              description: (a as any)?.payload?.description ?? null,
+              createdAt: nowIso,
+            },
+          });
+        }
+      }
+
+      // award_points → immediate buyer credit (order_* and customer_inactive)
+      for (const a of acts.filter((x) => x.type === "award_points")) {
+        if (!clientId) continue; // needs a customer
+        const ptsRaw = Number((a as any)?.payload?.points ?? 0);
+        if (!Number.isFinite(ptsRaw) || ptsRaw <= 0) continue;
+        const points = round1(ptsRaw);
+
+        const logId = uuidv4();
+        const description =
+          (a as any)?.payload?.description ??
+          `Rule bonus: ${ruleLabel}`;
+        await pool.query(
+          `
+          INSERT INTO "affiliatePointLogs"(
+            id,"organizationId","clientId",points,action,description,"sourceClientId",
+            "createdAt","updatedAt"
+          )
+          VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+          `,
+          [
+            logId,
+            organizationId,
+            clientId,
+            points,
+            "rule_award_points",
+            description,
+            null,
+          ],
+        );
+        await applyBalanceDelta(clientId, organizationId, points);
+        vars.points_awarded = String(points);
+      }
+
+      // default message if none provided
+      if (!message) {
+        message = `<p>Here’s an update for you{customer_name_with_comma}.</p>{recommended_products}{coupon}`;
+      }
+    } else if (raw.action === "send_coupon") {
+      const code = await getCouponCode(organizationId, payload.couponId);
+      replacements.coupon = code ? `<code>${escapeHtml(code)}</code>` : "";
+      if (payload.couponId && !vars.coupon_id) vars.coupon_id = String(payload.couponId);
+      if (!message) {
+        message = `<p>You’ve received a coupon{customer_name_with_comma}: {coupon}</p>`;
+      }
+    } else if (raw.action === "product_recommendation") {
+      const ids: string[] = Array.isArray(payload.productIds) ? payload.productIds : [];
+      if (ids.length && !vars.product_ids) vars.product_ids = ids.join(",");
+      const titles = await getProductTitles(organizationId, ids);
+      const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
+      replacements.selected_products = listHtml;
+      replacements.recommended_products = listHtml;
+      if (!message) {
+        message = `<p>{customer_name_prefix}we think you'll love these:</p>{recommended_products}`;
+      }
+    }
+
+    // apply placeholders (coupon, products, customer_name, etc.)
+    message = replacePlaceholders(message, replacements).trim();
+    if (!message) message = "<p>Notification</p>";
+
+    // Allow placeholders in subject too
+    subject = subject ? replacePlaceholders(subject, replacements) : undefined;
+
+    // For order_paid/completed, ensure caller invokes after revenue is recorded
+    // so order_total_gte evaluates against a real normalized total.
+
+    await sendNotification({
+      organizationId,
+      type: "automation_rule",
+      message,
+      subject,
+      channels,
+      variables: vars,
+      country,
+      clientId,
+      userId,
+      url,
+      trigger: "user_only",
+    });
+  }
+}
+
 /* ----------------------- placeholders + formatting ----------------------- */
 
 function escapeHtml(s: string) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function replacePlaceholders(html: string, map: Record<string, string>): string {
-  let out = html || "";
+function replacePlaceholders(template: string, map: Record<string, string>): string {
+  let out = template || "";
   for (const [k, v] of Object.entries(map)) {
+    // Replace all occurrences of {key}
     out = out.replace(new RegExp(`\\{${k}\\}`, "g"), v ?? "");
   }
+  // Remove any unreplaced simple placeholders to avoid leaking braces
+  out = out.replace(/\{[a-zA-Z0-9_]+\}/g, "");
   return out;
 }
 
@@ -282,271 +608,4 @@ async function getProductTitles(organizationId: string, ids: string[]) {
     [organizationId, ids],
   );
   return rows.map((r) => String(r.title || ""));
-}
-
-/* -------------------------- scope & dedupe locking ------------------------- */
-
-function resolveScope(event: EventType, payload: any): RunScope {
-  // UI sends payload.scope; default logic here for safety:
-  // - customer_inactive can only be per_customer
-  // - order_* default per_order
-  const uiScope = payload?.scope as RunScope | undefined;
-  if (event === "customer_inactive") return "per_customer";
-  return uiScope === "per_customer" ? "per_customer" : "per_order";
-}
-
-/**
- * Try to acquire a one-time lock so the rule fires only once per scope.
- * We key by a synthetic dedupeKey and rely on a UNIQUE index.
- *
- * - per_order:  rule:<ruleId>:order:<orderId>
- * - per_customer: rule:<ruleId>:client:<clientId>
- */
-async function tryAcquireRuleLock(opts: {
-  organizationId: string;
-  ruleId: string;
-  event: EventType;
-  scope: RunScope;
-  clientId: string | null;
-  orderId: string | null;
-}): Promise<boolean> {
-  const { organizationId, ruleId, event, scope, clientId, orderId } = opts;
-
-  // If scope needs an ID that's missing, we can't lock confidently → skip send.
-  if (scope === "per_order" && !orderId) return false;
-  if (scope === "per_customer" && !clientId) return false;
-
-  const dedupeKey =
-    scope === "per_order"
-      ? `rule:${ruleId}:order:${orderId}`
-      : `rule:${ruleId}:client:${clientId}`;
-
-  const { rowCount } = await pool.query(
-    `
-    INSERT INTO "automationRuleLocks"
-      ("organizationId","ruleId","event","clientId","orderId","dedupeKey","createdAt")
-    VALUES ($1,$2,$3,$4,$5,$6,NOW())
-    ON CONFLICT ("organizationId","dedupeKey") DO NOTHING
-  `,
-    [organizationId, ruleId, event, clientId, orderId, dedupeKey],
-  );
-
-  return rowCount > 0; // true → first time; false → already sent before
-}
-
-/* ----------------------------- main processor ---------------------------- */
-
-export async function processAutomationRules(opts: {
-  organizationId: string;
-  event: EventType;
-  country?: string | null;
-  variables?: Record<string, string>;
-  orderCurrency?: string | null; // (NEW) keeps TS happy with extra caller props
-  clientId?: string | null;
-  userId?: string | null;
-  orderId?: string | null;
-  url?: string | null;
-}) {
-  const {
-    organizationId,
-    event,
-    country = null,
-    variables = {},
-    clientId = null,
-    userId = null,
-    url = null,
-    orderId = null,
-  } = opts;
-
-  // Pull enabled rules for this event, ordered by priority.
-  const res = await pool.query(
-    `
-    SELECT id,"organizationId",name,enabled,priority,event,
-           countries,action,channels,payload
-      FROM "automationRules"
-     WHERE "organizationId" = $1
-       AND event = $2
-       AND enabled = TRUE
-     ORDER BY priority ASC, "createdAt" DESC
-    `,
-    [organizationId, event],
-  );
-
-  // Context values available for conditions.
-  const productIdsInOrder = orderId ? await getOrderProductIds(orderId) : [];
-  const eurTotal = orderId ? await getOrderEURTotalRobust(orderId) : null; // (CHANGED) robust fallback
-  const daysSinceLastOrder = await getDaysSinceLastPaidOrCompletedOrder(
-    organizationId,
-    clientId ?? null,
-  );
-
-  for (const raw of res.rows as RuleRow[]) {
-    const countries: string[] =
-      Array.isArray((raw as any).countries)
-        ? (raw as any).countries
-        : JSON.parse(raw.countries || "[]");
-
-    if (countries.length && (!country || !countries.includes(country))) continue;
-
-    const channels: NotificationChannel[] =
-      Array.isArray((raw as any).channels)
-        ? (raw as any).channels as any
-        : JSON.parse(raw.channels || "[]");
-
-    const payload =
-      typeof raw.payload === "string"
-        ? JSON.parse(raw.payload || "{}")
-        : raw.payload ?? {};
-
-    const conditions: ConditionsGroup | undefined = payload?.conditions;
-
-    const match = evalConditions(conditions, {
-      hasProduct: (ids) => ids.some((id) => productIdsInOrder.includes(id)),
-      eurTotal,
-      daysSinceLastOrder,
-    });
-    if (!match) continue;
-
-    // Determine dedupe scope and acquire a lock.
-    const scope = resolveScope(raw.event, payload);
-    const acquired = await tryAcquireRuleLock({
-      organizationId,
-      ruleId: raw.id,
-      event: raw.event,
-      scope,
-      clientId: clientId ?? null,
-      orderId: orderId ?? null,
-    });
-
-    if (!acquired) {
-      // Already ran for this scope — skip sending.
-      continue;
-    }
-
-    // shared (may exist in single-action too)
-    const subject: string | undefined = payload.templateSubject || undefined;
-    let message: string = payload.templateMessage || "";
-    const nowIso = new Date().toISOString();
-    const ruleLabel = raw.name || "Automation rule";
-
-    // Build placeholder map depending on rule mode
-    const replacements: Record<string, string> = {};
-    const vars: Record<string, string> = { ...variables };
-
-    if (raw.action === "multi") {
-      const acts: Array<{ type: string; payload?: any }> = Array.isArray(payload.actions) ? payload.actions : [];
-
-      // coupon
-      const couponAct = acts.find((a) => a.type === "send_coupon");
-      if (couponAct?.payload?.couponId) {
-        const code = await getCouponCode(organizationId, couponAct.payload.couponId);
-        if (code) replacements.coupon = `<code>${escapeHtml(code)}</code>`;
-        if (!vars.coupon_id) vars.coupon_id = String(couponAct.payload.couponId);
-      }
-
-      // products
-      const prodAct = acts.find((a) => a.type === "product_recommendation");
-      const ids: string[] = Array.isArray(prodAct?.payload?.productIds) ? prodAct.payload.productIds : [];
-      if (ids.length) {
-        const titles = await getProductTitles(organizationId, ids);
-        const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
-        replacements.selected_products = listHtml;
-        replacements.recommended_products = listHtml; // back-compat
-        if (!vars.product_ids) vars.product_ids = ids.join(",");
-      }
-
-      // multiply_points → set per-order multiplier for spending milestone (only on order_* events)
-      for (const a of acts.filter((x) => x.type === "multiply_points")) {
-        if (!orderId) continue; // needs an order
-        // only buyer's points are affected; we merely persist meta for later spending-bonus awarder
-        const factorRaw = Number((a as any)?.payload?.factor ?? 0);
-        if (Number.isFinite(factorRaw) && factorRaw > 0) {
-          // append entry; also maintain automation.maxPointsMultiplier with "be max" semantics
-          await appendOrderAutomationEvent({
-            organizationId,
-            orderId,
-            entry: {
-              event: "points_multiplier",
-              factor: factorRaw,
-              ruleId: raw.id,
-              label: ruleLabel,
-              description: (a as any)?.payload?.description ?? null,
-              createdAt: nowIso,
-            },
-          });
-        }
-      }
-
-      // award_points → immediate buyer credit (order_* and customer_inactive)
-      for (const a of acts.filter((x) => x.type === "award_points")) {
-        if (!clientId) continue; // needs a customer to receive the points
-        const ptsRaw = Number((a as any)?.payload?.points ?? 0);
-        if (!Number.isFinite(ptsRaw) || ptsRaw <= 0) continue;
-        const points = round1(ptsRaw); // 1 decimal; “round to nearest”
-
-        const logId = uuidv4();
-        const description =
-          (a as any)?.payload?.description ??
-          `Rule bonus: ${ruleLabel}`;
-        await pool.query(
-          `
-        INSERT INTO "affiliatePointLogs"(
-          id,"organizationId","clientId",points,action,description,"sourceClientId",
-          "createdAt","updatedAt"
-        )
-        VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
-        `,
-          [
-            logId,
-            organizationId,
-            clientId,
-            points,
-            "rule_award_points",
-            description,
-            null, // always buyer-only as requested
-          ],
-        );
-        await applyBalanceDelta(clientId, organizationId, points);
-        vars.points_awarded = String(points);
-      }
-
-      if (!message) {
-        message = `<p>Here’s an update for you.</p>{recommended_products}{coupon}`;
-      }
-    } else if (raw.action === "send_coupon") {
-      const code = await getCouponCode(organizationId, payload.couponId);
-      replacements.coupon = code ? `<code>${escapeHtml(code)}</code>` : "";
-      if (payload.couponId && !vars.coupon_id) vars.coupon_id = String(payload.couponId);
-      if (!message) message = `<p>You’ve received a coupon: {coupon}</p>`;
-    } else if (raw.action === "product_recommendation") {
-      const ids: string[] = Array.isArray(payload.productIds) ? payload.productIds : [];
-      if (ids.length && !vars.product_ids) vars.product_ids = ids.join(",");
-      const titles = await getProductTitles(organizationId, ids);
-      const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
-      replacements.selected_products = listHtml;
-      replacements.recommended_products = listHtml;
-      if (!message) message = `<p>We think you'll love these:</p>{recommended_products}`;
-    }
-
-    // apply placeholders
-    message = replacePlaceholders(message, replacements);
-    if (!message.trim()) message = "<p>Notification</p>";
-
-    // NOTE: For order_paid/completed, call sites should invoke after revenue is recorded,
-    // so conditions like order_total_gte_eur evaluate against a real EUR total.
-
-    await sendNotification({
-      organizationId,
-      type: "automation_rule",
-      message,
-      subject,
-      channels,
-      variables: vars,
-      country,
-      clientId,
-      userId,
-      url,
-      trigger: "user_only",
-    });
-  }
 }
