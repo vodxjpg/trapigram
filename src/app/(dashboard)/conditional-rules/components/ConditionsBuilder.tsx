@@ -1,4 +1,3 @@
-// src/app/(dashboard)/conditional-rules/components/ConditionsBuilder.tsx
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -11,7 +10,7 @@ import ProductMulti from "./ProductMulti";
 
 export type ConditionItem =
   | { kind: "contains_product"; productIds: string[] }
-  | { kind: "order_total_gte_eur"; amount: number }
+  | { kind: "order_total_gte"; amount: number }
   | { kind: "no_order_days_gte"; days: number };
 
 export type ConditionsGroup = { op: "AND" | "OR"; items: ConditionItem[] };
@@ -33,7 +32,7 @@ export default function ConditionsBuilder({
   value,
   onChange,
   disabled,
-  allowedKinds = ["contains_product", "order_total_gte_eur", "no_order_days_gte"],
+  allowedKinds = ["contains_product", "order_total_gte", "no_order_days_gte"],
   ruleCountries = [],
 }: {
   value: ConditionsGroup;
@@ -51,8 +50,8 @@ export default function ConditionsBuilder({
   const coerceKind = (k: ConditionItem["kind"]): ConditionItem =>
     k === "contains_product"
       ? { kind: "contains_product", productIds: [] }
-      : k === "order_total_gte_eur"
-      ? { kind: "order_total_gte_eur", amount: 0 }
+      : k === "order_total_gte"
+      ? { kind: "order_total_gte", amount: 0 }
       : { kind: "no_order_days_gte", days: 30 };
 
   const updateItem = (idx: number, patch: Partial<ConditionItem>) => {
@@ -119,8 +118,8 @@ export default function ConditionsBuilder({
                     {allowedKinds.includes("contains_product") && (
                       <SelectItem value="contains_product">Contains product</SelectItem>
                     )}
-                    {allowedKinds.includes("order_total_gte_eur") && (
-                      <SelectItem value="order_total_gte_eur">Order total ≥ amount</SelectItem>
+                    {allowedKinds.includes("order_total_gte") && (
+                      <SelectItem value="order_total_gte">Order total ≥ amount</SelectItem>
                     )}
                     {allowedKinds.includes("no_order_days_gte") && (
                       <SelectItem value="no_order_days_gte">No order in ≥ days</SelectItem>
@@ -146,16 +145,16 @@ export default function ConditionsBuilder({
                     value={it.productIds || []}
                     onChange={(ids) => updateItem(idx, { productIds: ids })}
                     disabled={disabled}
-                    ruleCountries={ruleCountries}  // <-- pass through
+                    ruleCountries={ruleCountries}
                   />
                 </>
               )}
 
-              {it.kind === "order_total_gte_eur" && (
+              {it.kind === "order_total_gte" && (
                 <div className="grid gap-2">
                   <div className="flex items-center gap-2">
-                    <Label>Amount in EUR</Label>
-                    <Hint text="Passes when the order’s EUR total is at least this amount." />
+                    <Label>Amount</Label>
+                    <Hint text="Passes when the order’s normalized total (EUR) is at least this amount." />
                   </div>
                   <Input
                     type="number"

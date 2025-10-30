@@ -1,7 +1,6 @@
-// src/app/(dashboard)/conditional-rules/components/RulesTable.tsx
 "use client";
 
-import { useEffect, useState, useCallback, Fragment } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,8 +40,6 @@ function humanEvent(e: string) {
   return map[e] ?? e;
 }
 
-const nbsp = "\u00A0";
-
 function joinWithCommaLimited(items: string[], max = 2): string {
   if (items.length <= max) return items.join(", ");
   return `${items.slice(0, max).join(", ")}, ...`;
@@ -51,7 +48,6 @@ function joinWithCommaLimited(items: string[], max = 2): string {
 function euro(n: number) {
   const v = Number(n);
   if (!Number.isFinite(v)) return String(n);
-  // compact but readable: avoid too many decimals for integers
   return `€${v % 1 === 0 ? v.toFixed(0) : v.toFixed(2)}`;
 }
 
@@ -96,6 +92,13 @@ function buildConditionLabels(r: RuleRow): string[] {
         }
         break;
       }
+      // New discriminator
+      case "order_total_gte": {
+        const amt = Number(it.amount ?? 0);
+        labels.push(`Total ≥ ${euro(amt)}`);
+        break;
+      }
+      // Back-compat: show legacy items nicely
       case "order_total_gte_eur": {
         const amt = Number(it.amount ?? 0);
         labels.push(`Total ≥ ${euro(amt)}`);
@@ -111,8 +114,6 @@ function buildConditionLabels(r: RuleRow): string[] {
     }
   }
 
-  // Also surface selected countries as a readable “condition”-like filter.
-  // This will only show if there’s room (top 2 chips logic is applied later in the cell).
   if (Array.isArray(r.countries) && r.countries.length > 0) {
     const ctext =
       r.countries.length === 1
@@ -132,12 +133,10 @@ function buildActionLabels(r: RuleRow): string[] {
   const p = r.payload ?? {};
 
   const pushChannelsSuffix = (base: string) => {
-    // channels shown as visual badges elsewhere; keep labels concise
     texts.push(base);
   };
 
   if (r.action === "send_coupon") {
-    const id = p?.couponId ? ` (#${String(p.couponId).slice(0, 6)}...)` : "";
     pushChannelsSuffix(`Send coupon`);
     return texts;
   }
@@ -147,14 +146,13 @@ function buildActionLabels(r: RuleRow): string[] {
     if (ids.length === 0) {
       pushChannelsSuffix("Recommend products");
     } else if (ids.length === 1) {
-      pushChannelsSuffix(`Recommend product `);
+      pushChannelsSuffix(`Recommend product`);
     } else {
       pushChannelsSuffix(`Recommend products`);
     }
     return texts;
   }
 
-  // multi
   const actions: Array<any> = Array.isArray(p?.actions) ? p.actions : [];
   for (const a of actions) {
     if (!a || typeof a !== "object") continue;
@@ -162,24 +160,15 @@ function buildActionLabels(r: RuleRow): string[] {
     const pay = a.payload ?? {};
 
     if (t === "send_coupon") {
-      const id = pay?.couponId ? ` (#${String(pay.couponId).slice(0, 6)}...)` : "";
       texts.push(`Send coupon`);
     } else if (t === "product_recommendation") {
       const ids: string[] = Array.isArray(pay?.productIds) ? pay.productIds : [];
-      if (ids.length === 0) {
-        texts.push("Recommend products");
-      } else if (ids.length === 1) {
-        texts.push(`Recommend product`);
-      } else {
-        texts.push(`Recommend products`);
-      }
+      if (ids.length === 0) texts.push("Recommend products");
+      else if (ids.length === 1) texts.push(`Recommend product`);
+      else texts.push(`Recommend products`);
     } else if (t === "multiply_points") {
       const factor = Number(pay?.factor ?? 0);
-      if (Number.isFinite(factor) && factor > 0) {
-        texts.push(`Multiplier ×${factor}`);
-      } else {
-        texts.push("Set points multiplier");
-      }
+      texts.push(Number.isFinite(factor) && factor > 0 ? `Multiplier ×${factor}` : "Set points multiplier");
     } else if (t === "award_points") {
       const pts = Number(pay?.points ?? 0);
       texts.push(Number.isFinite(pts) && pts > 0 ? `Award ${pts} pts` : "Award points");
@@ -250,9 +239,7 @@ export default function RulesTable() {
   };
 
   if (loading) {
-    return (
-      <div className="p-6 text-center text-muted-foreground">Loading…</div>
-    );
+    return <div className="p-6 text-center text-muted-foreground">Loading…</div>;
   }
 
   return (
@@ -278,12 +265,8 @@ export default function RulesTable() {
               <td className="p-3 font-medium">{r.name}</td>
               <td className="p-3">{humanEvent(r.event)}</td>
 
-              {/* Conditions: show up to 2 chips, then "..." */}
-              <td className="p-3 align-top">
-                {chipsLimited(conditionLabels, 2)}
-              </td>
+              <td className="p-3 align-top">{chipsLimited(conditionLabels, 2)}</td>
 
-              {/* Actions: show up to 2 chips, then "..." + channel badges on the right */}
               <td className="p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>{chipsLimited(actionLabels, 2)}</div>
@@ -301,11 +284,7 @@ export default function RulesTable() {
 
               <td className="p-3">{r.priority ?? 100}</td>
               <td className="p-3">
-                {r.enabled ? (
-                  <Badge variant="default">Enabled</Badge>
-                ) : (
-                  <Badge variant="secondary">Disabled</Badge>
-                )}
+                {r.enabled ? <Badge variant="default">Enabled</Badge> : <Badge variant="secondary">Disabled</Badge>}
               </td>
               <td className="p-3 text-right">
                 <div className="flex justify-end gap-2">
@@ -314,29 +293,16 @@ export default function RulesTable() {
                   </Button>
 
                   {r.enabled ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => toggleEnabled(r.id, false)}
-                    >
+                    <Button size="sm" variant="secondary" onClick={() => toggleEnabled(r.id, false)}>
                       Disable
                     </Button>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => toggleEnabled(r.id, true)}
-                    >
+                    <Button size="sm" variant="secondary" onClick={() => toggleEnabled(r.id, true)}>
                       Enable
                     </Button>
                   )}
 
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => removeRule(r.id)}
-                  >
+                  <Button type="button" size="sm" variant="destructive" onClick={() => removeRule(r.id)}>
                     Delete
                   </Button>
                 </div>
