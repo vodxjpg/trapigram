@@ -100,6 +100,7 @@ const data = {
         { title: "Affiliates", url: "/affiliates" },
         { title: "Coupons", url: "/coupons" },
         { title: "Tier pricing", url: "/discount-rules" },
+        { title: "Conditional rules", url: "/conditional-rules" },
       ],
     },
     {
