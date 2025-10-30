@@ -3,6 +3,19 @@ import { pgPool as pool } from "@/lib/db";
 import { sendNotification, type NotificationChannel } from "@/lib/notifications";
 import { v4 as uuidv4 } from "uuid";
 
+/* ───────────────── automation debug ─────────────────
+ * Enable with: AUTMATION_DEBUG=1 (see .env.example)
+ * Logs are intentionally structured and avoid leaking secrets.
+ */
+const AUTOMATION_DEBUG = process.env.AUTOMATION_DEBUG === "1";
+const alog = (...a: any[]) => { if (AUTOMATION_DEBUG) console.log("[automation]", ...a); };
+const mask = (s: unknown) => {
+  const str = String(s ?? "");
+  return str.length > 6 ? `${str.slice(0, 2)}…${str.slice(-4)}` : str;
+};
+
+/* ─────────────────────────────────────────────────── */
+
 type EventType =
   | "order_placed"
   | "order_pending_payment"
@@ -43,7 +56,7 @@ type ConditionsGroup = {
 type RunScope = "per_order" | "per_customer";
 
 const EURO_COUNTRIES = new Set([
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
 ]);
 
 function currencyFromCountry(c: string) {
@@ -343,6 +356,9 @@ export async function processAutomationRules(opts: {
     onlyRuleIds = null,
   } = opts;
 
+  const runId = uuidv4();
+  alog("start", { runId, organizationId, event, orderId, clientId, country });
+
   // Pull enabled rules for this event, ordered by priority.
   const res = await pool.query(
     `
@@ -357,6 +373,8 @@ export async function processAutomationRules(opts: {
     [organizationId, event],
   );
 
+  alog(runId, "rules:loaded", { count: res.rowCount ?? res.rows.length });
+
   // Context values available for conditions.
   const productIdsInOrder = orderId ? await getOrderProductIds(orderId) : [];
   const eurTotal = orderId ? await getOrderEURTotalRobust(orderId) : null; // internal normalized
@@ -364,6 +382,12 @@ export async function processAutomationRules(opts: {
     organizationId,
     clientId ?? null,
   );
+
+  alog(runId, "ctx", {
+    productIds: productIdsInOrder.length,
+    eurTotal,
+    daysSinceLastOrder,
+  });
 
   // Optional customer name for placeholders
   const customerName = await getClientName(organizationId, clientId ?? null);
@@ -393,7 +417,14 @@ export async function processAutomationRules(opts: {
         : JSON.parse(raw.countries || "[]");
     } catch { countries = []; }
 
-    if (countries.length && (!country || !countries.includes(country))) continue;
+    alog(runId, "rule:candidate", {
+      ruleId: raw.id, name: raw.name, priority: raw.priority,
+      event: raw.event, action: raw.action, countries
+    });
+    if (countries.length && (!country || !countries.includes(country))) {
+      alog(runId, "rule:skip_country", { ruleId: raw.id, country, allowed: countries });
+      continue;
+    }
 
     let channels: NotificationChannel[] = [];
     try {
@@ -407,6 +438,10 @@ export async function processAutomationRules(opts: {
         ? (JSON.parse(raw.payload || "{}") as any)
         : (raw.payload ?? {});
 
+    alog(runId, "rule:channels_payload", {
+      ruleId: raw.id, channelCount: channels.length, hasTpl: !!payload?.templateMessage
+    });
+
     const conditions: ConditionsGroup | undefined = payload?.conditions;
 
     const match = evalConditions(conditions, {
@@ -414,10 +449,21 @@ export async function processAutomationRules(opts: {
       eurTotal,
       daysSinceLastOrder,
     });
-    if (!match) continue;
+    alog(runId, "rule:conditions_eval", {
+      ruleId: raw.id,
+      conditions: conditions ?? null,
+      ctx: { productCount: productIdsInOrder.length, eurTotal, daysSinceLastOrder }
+    });
+    if (!match) {
+      alog(runId, "rule:conditions_skip", { ruleId: raw.id });
+      continue;
+    } else {
+      alog(runId, "rule:conditions_ok", { ruleId: raw.id });
+    }
 
     // Determine dedupe scope.
-    const scope = resolveScope(raw.event, payload);
+    const scope: RunScope = resolveScope(raw.event, payload);
+    alog(runId, "rule:scope", { ruleId: raw.id, scope });
 
     // For customer_inactive, DO NOT acquire the permanent dedupe lock.
     // Repetition is governed by the sweep using ruleEngagement.lockUntil.
@@ -430,7 +476,13 @@ export async function processAutomationRules(opts: {
         clientId: clientId ?? null,
         orderId: orderId ?? null,
       });
-      if (!acquired) continue; // already fired for this scope
+      if (!acquired) {
+        alog(runId, "rule:skip_dedupe", { ruleId: raw.id, scope });
+        continue; // already fired for this scope
+      }
+      alog(runId, "rule:dedupe_acquired", { ruleId: raw.id, scope });
+    } else {
+      alog(runId, "rule:no_dedupe_customer_inactive", { ruleId: raw.id });
     }
 
     // subject/message setup
@@ -455,6 +507,9 @@ export async function processAutomationRules(opts: {
         const code = await getCouponCode(organizationId, couponAct.payload.couponId);
         if (code) replacements.coupon = `<code>${escapeHtml(code)}</code>`;
         if (!vars.coupon_id) vars.coupon_id = String(couponAct.payload.couponId);
+        alog(runId, "act:send_coupon", {
+          ruleId: raw.id, couponId: couponAct.payload.couponId, code: code ? mask(code) : null
+        });
       } else {
         replacements.coupon = replacements.coupon ?? "";
       }
@@ -467,7 +522,7 @@ export async function processAutomationRules(opts: {
         const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
         replacements.selected_products = listHtml;
         replacements.recommended_products = listHtml; // back-compat
-        if (!vars.product_ids) vars.product_ids = ids.join(",");
+        alog(runId, "act:recommend", { ruleId: raw.id, productCount: ids.length });
       } else {
         replacements.selected_products = "";
         replacements.recommended_products = "";
@@ -490,6 +545,7 @@ export async function processAutomationRules(opts: {
               createdAt: nowIso,
             },
           });
+          alog(runId, "act:multiply_points", { ruleId: raw.id, factor: factorRaw });
         }
       }
 
@@ -524,6 +580,7 @@ export async function processAutomationRules(opts: {
         );
         await applyBalanceDelta(clientId, organizationId, points);
         vars.points_awarded = String(points);
+        alog(runId, "act:award_points", { ruleId: raw.id, points });
       }
 
       // default message if none provided
@@ -534,6 +591,7 @@ export async function processAutomationRules(opts: {
       const code = await getCouponCode(organizationId, payload.couponId);
       replacements.coupon = code ? `<code>${escapeHtml(code)}</code>` : "";
       if (payload.couponId && !vars.coupon_id) vars.coupon_id = String(payload.couponId);
+      alog(runId, "act:send_coupon", { ruleId: raw.id, couponId: payload.couponId, code: code ? mask(code) : null });
       if (!message) {
         message = `<p>You’ve received a coupon{customer_name_with_comma}: {coupon}</p>`;
       }
@@ -544,6 +602,7 @@ export async function processAutomationRules(opts: {
       const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
       replacements.selected_products = listHtml;
       replacements.recommended_products = listHtml;
+      alog(runId, "act:recommend", { ruleId: raw.id, productCount: ids.length });
       if (!message) {
         message = `<p>{customer_name_prefix}we think you'll love these:</p>{recommended_products}`;
       }
@@ -559,6 +618,12 @@ export async function processAutomationRules(opts: {
     // For order_paid/completed, ensure caller invokes after revenue is recorded
     // so order_total_gte evaluates against a real normalized total.
 
+    alog(runId, "rule:fire", {
+      ruleId: raw.id, name: raw.name, action: raw.action, scope,
+      channels, subject: subject ? String(subject).slice(0, 80) : undefined,
+      orderId, clientId
+    });
+
     await sendNotification({
       organizationId,
       type: "automation_rule",
@@ -572,7 +637,9 @@ export async function processAutomationRules(opts: {
       url,
       trigger: "user_only",
     });
+    alog(runId, "rule:sent", { ruleId: raw.id, channelsCount: channels.length });
   }
+  alog(runId, "done");
 }
 
 /* ----------------------- placeholders + formatting ----------------------- */
