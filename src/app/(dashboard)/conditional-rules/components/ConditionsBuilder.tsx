@@ -10,8 +10,8 @@ import ProductMulti from "./ProductMulti";
 
 export type ConditionItem =
   | { kind: "contains_product"; productIds: string[] }
-  | { kind: "order_total_gte"; amount: number }
-  | { kind: "no_order_days_gte"; days: number };
+  | { kind: "order_total_gte"; amount?: number }           // amount optional while typing
+  | { kind: "no_order_days_gte"; days?: number };          // days optional while typing
 
 export type ConditionsGroup = { op: "AND" | "OR"; items: ConditionItem[] };
 
@@ -51,7 +51,7 @@ export default function ConditionsBuilder({
     k === "contains_product"
       ? { kind: "contains_product", productIds: [] }
       : k === "order_total_gte"
-      ? { kind: "order_total_gte", amount: 0 }
+      ? { kind: "order_total_gte", amount: undefined }
       : { kind: "no_order_days_gte", days: 30 };
 
   const updateItem = (idx: number, patch: Partial<ConditionItem>) => {
@@ -153,15 +153,18 @@ export default function ConditionsBuilder({
               {it.kind === "order_total_gte" && (
                 <div className="grid gap-2">
                   <div className="flex items-center gap-2">
-                    <Label>Amount</Label>
-                    <Hint text="Passes when the order’s normalized total (EUR) is at least this amount." />
+                    <Label>Amount in EUR</Label>
+                    <Hint text="Passes when the order’s EUR total is at least this amount." />
                   </div>
                   <Input
                     type="number"
                     min={0}
                     step="0.01"
                     value={Number.isFinite((it as any).amount) ? String((it as any).amount) : ""}
-                    onChange={(e) => updateItem(idx, { amount: Number(e.target.value || 0) } as any)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      updateItem(idx, { amount: raw === "" ? undefined : Number(raw) } as any);
+                    }}
                     disabled={disabled}
                   />
                 </div>
@@ -177,8 +180,11 @@ export default function ConditionsBuilder({
                     type="number"
                     min={1}
                     step="1"
-                    value={Number.isFinite((it as any).days) ? String((it as any).days) : "30"}
-                    onChange={(e) => updateItem(idx, { days: Number(e.target.value || 1) } as any)}
+                    value={Number.isFinite((it as any).days) ? String((it as any).days) : ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      updateItem(idx, { days: raw === "" ? undefined : Number(raw) } as any);
+                    }}
                     disabled={disabled}
                   />
                 </div>

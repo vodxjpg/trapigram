@@ -359,7 +359,7 @@ export default function RuleForm({
     },
   });
 
-  // Single, unified useFieldArray for actions (fixes duplicate hook error)
+  // Single, unified useFieldArray for actions
   const {
     fields: actionFields,
     append: appendAction,
@@ -367,6 +367,17 @@ export default function RuleForm({
     update: updateAction,
     replace: replaceActions,
   } = useFieldArray({ control: form.control, name: "actions" });
+
+  // Helper: set a nested payload field without remounting the whole row
+  const setActionPayloadField = React.useCallback(
+    (idx: number, field: string, value: unknown) => {
+      form.setValue(`actions.${idx}.payload.${field}` as const, value as any, {
+        shouldDirty: true,
+        shouldTouch: true,
+      });
+    },
+    [form]
+  );
 
   // Normalize legacy defaults AND pick up payload.scope / cooldownDays if present.
   React.useEffect(() => {
@@ -561,10 +572,11 @@ export default function RuleForm({
     router.refresh();
   }
 
+  // Keep updateAction only for structural changes (e.g., type switch),
+  // but for keystrokes use setActionPayloadField to avoid remount/focus loss.
   const updateActionItem = (idx: number, patch: Partial<ActionItem>) => {
     const cur = (form.getValues(`actions.${idx}`) || {}) as ActionItem;
     updateAction(idx, { ...(cur as any), ...(patch as any) });
-    form.trigger("actions");
   };
 
   const addAction = () => appendAction({ type: "send_coupon", payload: {} } as any);
@@ -753,24 +765,6 @@ export default function RuleForm({
           />
         </section>
 
-        {/* Delivery */}
-        <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Delivery</h2>
-            <Hint text="Email and/or Telegram." />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Label>Channels</Label>
-            </div>
-            <ChannelsPicker
-              value={(w.channels as Channel[]) ?? []}
-              onChange={(v) => form.setValue("channels", v)}
-              disabled={disabled}
-            />
-          </div>
-        </section>
-
         {/* Actions (data only) */}
         <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
           <div className="flex items-center justify-between">
@@ -840,11 +834,7 @@ export default function RuleForm({
                     </div>
                     <CouponSelect
                       value={((a as any).payload?.couponId ?? null) as any}
-                      onChange={(id) =>
-                        updateActionItem(idx, {
-                          payload: { ...(a as any).payload, couponId: id },
-                        })
-                      }
+                      onChange={(id) => setActionPayloadField(idx, "couponId", id)}
                       ruleCountries={w.countries}
                       disabled={disabled}
                     />
@@ -870,28 +860,21 @@ export default function RuleForm({
                             ? (a as any).payload.factor
                             : ""
                         }
-                        onChange={(e) =>
-                          updateActionItem(idx, {
-                            payload: {
-                              ...(a as any).payload,
-                              factor: Number(e.target.value || 0),
-                            },
-                          })
-                        }
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setActionPayloadField(
+                            idx,
+                            "factor",
+                            raw === "" ? undefined : Number(raw)
+                          );
+                        }}
                         disabled={disabled}
                         placeholder="e.g. 1.5"
                       />
                       <Input
                         placeholder="Optional description (internal)"
                         value={(a as any).payload?.description ?? ""}
-                        onChange={(e) =>
-                          updateActionItem(idx, {
-                            payload: {
-                              ...(a as any).payload,
-                              description: e.target.value,
-                            },
-                          })
-                        }
+                        onChange={(e) => setActionPayloadField(idx, "description", e.target.value)}
                         disabled={disabled}
                       />
                     </div>
@@ -914,28 +897,21 @@ export default function RuleForm({
                             ? (a as any).payload.points
                             : ""
                         }
-                        onChange={(e) =>
-                          updateActionItem(idx, {
-                            payload: {
-                              ...(a as any).payload,
-                              points: Number(e.target.value || 0),
-                            },
-                          })
-                        }
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setActionPayloadField(
+                            idx,
+                            "points",
+                            raw === "" ? undefined : Number(raw)
+                          );
+                        }}
                         disabled={disabled}
                         placeholder="e.g. 10 or 1.5"
                       />
                       <Input
                         placeholder="Optional description (internal)"
                         value={(a as any).payload?.description ?? ""}
-                        onChange={(e) =>
-                          updateActionItem(idx, {
-                            payload: {
-                              ...(a as any).payload,
-                              description: e.target.value,
-                            },
-                          })
-                        }
+                        onChange={(e) => setActionPayloadField(idx, "description", e.target.value)}
                         disabled={disabled}
                       />
                     </div>
@@ -951,11 +927,7 @@ export default function RuleForm({
                     <ProductMulti
                       label="Products to recommend"
                       value={(Array.isArray((a as any).payload?.productIds) ? (a as any).payload.productIds : []) as string[]}
-                      onChange={(ids) =>
-                        updateActionItem(idx, {
-                          payload: { ...(a as any).payload, productIds: ids },
-                        })
-                      }
+                      onChange={(ids) => setActionPayloadField(idx, "productIds", ids)}
                       disabled={disabled}
                       ruleCountries={w.countries}
                     />
@@ -964,6 +936,24 @@ export default function RuleForm({
               </div>
             );
           })}
+        </section>
+
+        {/* Delivery — moved to sit ABOVE Message */}
+        <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Delivery</h2>
+            <Hint text="Email and/or Telegram." />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Channels</Label>
+            </div>
+            <ChannelsPicker
+              value={(w.channels as Channel[]) ?? []}
+              onChange={(v) => form.setValue("channels", v, { shouldDirty: true })}
+              disabled={disabled}
+            />
+          </div>
         </section>
 
         {/* Shared Message — at the end for clarity */}
