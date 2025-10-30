@@ -962,7 +962,7 @@ export default function RuleForm({
                       <Hint text="Use {recommended_products} in the body to render them as a list." />
                     </div>
                     <ProductMulti
-                      label="Products to recommend"
+                      label="Choose one or many"
                       value={(Array.isArray((a as any).payload?.productIds) ? (a as any).payload.productIds : []) as string[]}
                       onChange={(ids) => setActionPayloadField(idx, "productIds", ids)}
                       disabled={disabled}
@@ -1058,11 +1058,7 @@ export default function RuleForm({
               value={w.templateMessage ?? ""}
               onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
               modules={quillModules}
-            />
-            <p className="text-xs text-muted-foreground">
-              Available: <code>{`{customer_name}`}</code>, <code>{`{coupon}`}</code>,{" "}
-              <code>{`{recommended_products}`}</code>
-            </p>
+            />-0
           </div>
         </section>
 
