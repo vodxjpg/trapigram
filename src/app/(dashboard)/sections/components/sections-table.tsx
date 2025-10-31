@@ -88,7 +88,7 @@ export function SectionsTable() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
 
-  const { hasPermission: canView,   isLoading: viewLoading }   = useHasPermission(orgId, { sections: ["view"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { sections: ["view"] });
   const { hasPermission: canCreate, isLoading: createLoading } = useHasPermission(orgId, { sections: ["create"] });
   const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { sections: ["update"] });
   const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, { sections: ["delete"] });
@@ -229,9 +229,6 @@ export function SectionsTable() {
   return (
     <div className="space-y-4">
       {/* header */}
-      <div className="flex justify-between">
-        <h1 className="text-2xl font-semibold">Sections</h1>
-      </div>
 
       <StandardDataTable<Section & { depth: number }>
         table={table}

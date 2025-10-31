@@ -9,6 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StandardDataTable } from "@/components/data-table/data-table";
 
+// Reusable info tooltip + dialog component
+import InfoHelpDialog from "@/components/dashboard/info-help-dialog";
+import { PageHeader } from "@/components/page-header";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"
+
 /* ───────────────────────── Types ───────────────────────── */
 
 type Channel = "email" | "telegram" | "in_app" | "webhook";
@@ -178,8 +183,13 @@ function buildActionLabels(r: RuleRow): string[] {
 /* ─────────────────────────── Page ─────────────────────────── */
 
 export default function RulesIndexPage() {
+  const { setHeaderTitle } = useHeaderTitle();
   const [rows, setRows] = useState<RuleRow[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    setHeaderTitle("Conditional Rules");
+  }, [setHeaderTitle]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -324,19 +334,39 @@ export default function RulesIndexPage() {
   });
 
   return (
-    <div className="p-4 md:p-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Conditional rules</h1>
-          <p className="text-sm text-muted-foreground">
-            Automate actions based on events and conditions.
-          </p>
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div>
+            <PageHeader
+              title="Conditional rules"
+              description="Automate actions based on events and conditions." />
+          </div>
+          {/* Use InfoHelpDialog with the new `content` prop */}
+          <InfoHelpDialog
+            title="About conditional rules"
+            tooltip="What are conditional rules?"
+            content={
+              <>
+                <p>
+                  <strong>Conditional rules</strong> are automated marketing actions that trigger when certain conditions are met — for example, when a customer hasn’t made a purchase in a specific period of time.
+                </p>
+                <p>
+                  These rules help you re-engage customers, reward loyalty, or automate promotions. You can set conditions (such as inactivity, order value, or frequency) and define actions like sending a message, applying discounts, or issuing rewards.
+                </p>
+                <p>
+                  In the table below, you can create, edit, or disable conditional rules. Click the <strong>+</strong> button to add a new rule and define your triggers and automated actions.
+                </p>
+              </>
+            }
+          />
         </div>
-        <Button asChild>
-          <Link href="/conditional-rules/new">New rule</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild>
+            <Link href="/conditional-rules/new">New rule</Link>
+          </Button>
+        </div>
       </div>
-
       <StandardDataTable
         table={table}
         columns={columns}
